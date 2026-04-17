@@ -516,7 +516,11 @@ st.sidebar.header("Google Earth Engine Login")
 
 st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
 
-st.sidebar.info("Sign in with Google, then enter your own Google Earth Engine Project ID.")
+st.sidebar.info(
+    "Sign in with your Google account, then enter your own Earth Engine project ID. "
+    "Please review the Privacy & Usage section before using this app."
+)
+
 with st.expander("🔐 Privacy & Usage"):
     st.markdown("""
     This application uses Google Sign-In and Google Earth Engine.
@@ -529,16 +533,18 @@ with st.expander("🔐 Privacy & Usage"):
     """)
 st.sidebar.markdown("📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)")
 
-project_id = st.sidebar.text_input(
-    "Enter your GEE Project ID",
-    help="Provide your own Google Earth Engine / GCP project ID (e.g., my-project-123)",
-    key="gee_project_id_input",
-)
 
 if "google_tokens" not in st.session_state:
     begin_oauth()
     st.sidebar.warning("Connect your Google account first.")
     st.stop()
+
+project_id = st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    help="Provide your own Google Earth Engine / GCP project ID (e.g., my-project-123)",
+    key="gee_project_id_input",
+)   
+    
 
 st.sidebar.success("Google account connected ✅")
 
