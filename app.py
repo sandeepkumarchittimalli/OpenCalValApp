@@ -533,17 +533,17 @@ with st.expander("🔐 Privacy & Usage"):
     """)
 st.sidebar.markdown("📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)")
 
+project_id = st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    help="Provide your own Google Earth Engine / GCP project ID (e.g., my-project-123)",
+    key="gee_project_id_input",
+)   
 
 if "google_tokens" not in st.session_state:
     begin_oauth()
     st.sidebar.warning("Connect your Google account first.")
     st.stop()
 
-project_id = st.sidebar.text_input(
-    "Enter your GEE Project ID",
-    help="Provide your own Google Earth Engine / GCP project ID (e.g., my-project-123)",
-    key="gee_project_id_input",
-)   
     
 
 st.sidebar.success("Google account connected ✅")
