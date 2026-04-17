@@ -512,8 +512,21 @@ def init_ee_for_logged_in_user(project_id: str) -> str:
 
 finish_oauth_if_needed()
 
-st.sidebar.info("Sign in with Google, then enter your own Google Earth Engine Project ID.")
 st.sidebar.header("Google Earth Engine Login")
+
+st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
+
+st.sidebar.info("Sign in with Google, then enter your own Google Earth Engine Project ID.")
+with st.expander("🔐 Privacy & Usage"):
+    st.markdown("""
+    This application uses Google Sign-In and Google Earth Engine.
+
+    - Runs under your account
+    - Uses your project resources
+    - Does not store credentials
+
+    Use responsibly and do not share sensitive data.
+    """)
 st.sidebar.markdown("📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)")
 
 project_id = st.sidebar.text_input(
