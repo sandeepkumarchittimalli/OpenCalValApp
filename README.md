@@ -37,7 +37,6 @@ OpenCalValPlan is a web-based application built with Streamlit and Google Earth 
 
 The app enables users to analyze past satellite acquisitions, compute Simultaneous Nadir Overpasses (SNOs), and visualize future satellite passes for selected locations and missions.
 
-Streamlit enables rapid development of interactive data applications with minimal code and easy deployment to the web. ([Streamlit][1])
 
 ---
 
