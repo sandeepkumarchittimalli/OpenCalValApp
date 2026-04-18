@@ -502,7 +502,7 @@ def get_user_google_credentials() -> Optional[Credentials]:
         scopes=data["scopes"],
     )
 
-@st.cache_resource(show_spinner=False)
+#@st.cache_resource(show_spinner=False)
 def init_ee_for_logged_in_user(project_id: str) -> str:
     creds = get_user_google_credentials()
     if creds is None:
@@ -814,7 +814,7 @@ def _add_centroid_safe(img: ee.Image, pt: ee.Geometry) -> ee.Image:
     })
 
 
-@st.cache_data(show_spinner=True)
+#@st.cache_data(show_spinner=True)
 def gee_past_acquisitions(
     lat: float,
     lon: float,
