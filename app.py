@@ -446,7 +446,7 @@ except Exception as e:
 RESULT_STATE_KEYS = [
     "past_df_raw", "past_df", "past_sno", "past_selected",
     "future_df_raw", "future_df", "future_sno", "future_selected",
-    "runtime_s", "last_compute_params",
+    "runtime_s", "last_compute_params", "future_prediction_errors",
 ]
 
 def clear_results_state() -> None:
@@ -1036,13 +1036,15 @@ def predict_future_passes_pyorbital(
 
     obs_alt_m = 0.0
     rows: List[Dict[str, Any]] = []
+    errors: List[str] = []
 
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception:
+        except Exception as e:
+            errors.append(f"{sat}: unable to load TLE / orbital data ({e})")
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1110,6 +1112,8 @@ def predict_future_passes_pyorbital(
                         "engine": "pyorbital",
                     })
 
+    st.session_state["future_prediction_errors"] = errors
+    st.session_state["future_prediction_errors"] = errors
     if not rows:
         return pd.DataFrame()
 
@@ -1140,13 +1144,15 @@ def predict_future_passes_skyfield(
 
     observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
     rows: List[Dict[str, Any]] = []
+    errors: List[str] = []
 
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
         try:
             sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception:
+        except Exception as e:
+            errors.append(f"{sat}: unable to load TLE / Skyfield satellite ({e})")
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1154,7 +1160,8 @@ def predict_future_passes_skyfield(
 
         try:
             t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception:
+        except Exception as e:
+            errors.append(f"{sat}: pass prediction failed ({e})")
             continue
 
         current_triplet = {}
@@ -1620,7 +1627,7 @@ def main():
 
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
-    st.caption("Zoom/pan/cluster click will NOT reset the map. Click empty map area to set site.")
+    st.caption("Click empty map area to set site. Pan/zoom should no longer invalidate results or rewrite map view state.")
 
     lat = float(st.session_state["lat"])
     lon = float(st.session_state["lon"])
@@ -1840,16 +1847,8 @@ def main():
     height=450,
     width="stretch",
     key="site_map",
-    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
+    returned_objects=["last_clicked", "last_object_clicked", "last_active_drawing", "all_drawings"],
 )
-
-    if map_data:
-       if map_data.get("center"):
-           st.session_state["map_view_center"] = [
-            float(map_data["center"]["lat"]),
-            float(map_data["center"]["lng"]),]
-    if map_data.get("zoom") is not None:
-        st.session_state["map_view_zoom"] = int(map_data["zoom"])
 
 
     def request_map_update(new_lat: float, new_lon: float):
@@ -1884,6 +1883,20 @@ def main():
                 request_map_update(float(coords[1]), float(coords[0]))
 
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
+
+    # Robust legend outside the map (works better in deployed Streamlit than injected HTML inside the map iframe)
+    if (not st.session_state.get("results_dirty")):
+        legend_selected = []
+        if st.session_state.get("mode") == "Past acquisitions":
+            legend_selected = st.session_state.get("past_selected", [])
+        elif st.session_state.get("mode") == "Future pass planning":
+            legend_selected = st.session_state.get("future_selected", [])
+        if legend_selected:
+            legend_html = "".join(
+                [f'<span style="display:inline-block;margin-right:12px;white-space:nowrap;"><span style="color:{mission_hex_color(s)};font-weight:900;">★</span> {s}</span>' for s in legend_selected]
+            )
+            st.markdown("**Legend**")
+            st.markdown(legend_html + '<span style="display:inline-block;margin-left:8px;white-space:nowrap;"><span style="display:inline-block;width:10px;height:10px;border:3px solid #FFD43B;border-radius:50%;vertical-align:middle;margin-right:6px;"></span>SNO</span>', unsafe_allow_html=True)
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1971,7 +1984,11 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
+                        errs = st.session_state.get("future_prediction_errors", [])
                         st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        if errs:
+                            st.error("Future prediction diagnostics\n- " + "\n- ".join(errs[:8]))
+                            st.info("This often happens in deployment when outbound access to CelesTrak is blocked or the Skyfield/Pyorbital dependency differs from local.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
