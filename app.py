@@ -11,7 +11,7 @@
 # - Runtime shown only total, big + colored (and can be placed on map)
 # - Metrics tab: acquisition/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
 # - Time series tabs: only when reflectance sampling enabled
-##############################################
+#############################################
 
 from __future__ import annotations
 
@@ -19,9 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, date
 from math import radians, sin, cos, acos
 from typing import Dict, Any, List, Optional, Tuple
-
-import base64
-import secrets
 
 import time
 import requests
@@ -370,22 +367,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
 ]
 
-def _encode_state_payload(code_verifier: str) -> str:
-    nonce = secrets.token_urlsafe(16)
-    raw = f"{nonce}.{code_verifier}".encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-def _decode_state_payload(state: str) -> Optional[str]:
-    try:
-        padding = "=" * (-len(state) % 4)
-        raw = base64.urlsafe_b64decode((state + padding).encode("ascii")).decode("utf-8")
-        parts = raw.split(".", 1)
-        if len(parts) != 2 or not parts[1]:
-            return None
-        return parts[1]
-    except Exception:
-        return None
-
 def make_flow(code_verifier: Optional[str] = None, state: Optional[str] = None):
     client_config = {
         "web": {
@@ -413,14 +394,15 @@ def make_flow(code_verifier: Optional[str] = None, state: Optional[str] = None):
 
 def begin_oauth():
     flow = make_flow()
-    state = _encode_state_payload(flow.code_verifier)
-    flow = make_flow(code_verifier=flow.code_verifier, state=state)
 
-    auth_url, _ = flow.authorization_url(
+    auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
+
+    st.session_state["oauth_state"] = state
+    st.session_state["oauth_code_verifier"] = flow.code_verifier
 
     st.sidebar.link_button("Connect Google Earth Engine", auth_url)
     st.sidebar.markdown(f"[Click here if button doesn't work]({auth_url})")
@@ -431,13 +413,15 @@ def finish_oauth_if_needed():
         return
 
     returned_state = qp.get("state")
-    if not returned_state:
-        st.error("OAuth error: missing state.")
+    saved_state = st.session_state.get("oauth_state")
+    code_verifier = st.session_state.get("oauth_code_verifier")
+
+    if not returned_state or not saved_state or returned_state != saved_state:
+        st.error("OAuth error: session expired. Please try signing in again.")
         st.stop()
 
-    code_verifier = _decode_state_payload(returned_state)
     if not code_verifier:
-        st.error("OAuth error: invalid or expired login state. Please try signing in again.")
+        st.error("OAuth error: session expired. Please try signing in again.")
         st.stop()
 
     flow = make_flow(code_verifier=code_verifier, state=returned_state)
@@ -453,6 +437,8 @@ def finish_oauth_if_needed():
         "scopes": list(creds.scopes),
     }
 
+    st.session_state.pop("oauth_state", None)
+    st.session_state.pop("oauth_code_verifier", None)
     st.query_params.clear()
     st.rerun()
 
@@ -511,42 +497,20 @@ if "google_tokens" not in st.session_state:
 
 st.sidebar.success("Google account connected ✅")
 
-if "project_submitted" not in st.session_state:
-    st.session_state["project_submitted"] = False
-if "submitted_project_id" not in st.session_state:
-    st.session_state["submitted_project_id"] = ""
-
-project_id_input = st.sidebar.text_input(
+project_id = st.sidebar.text_input(
     "Enter your GEE Project ID",
-    value=st.session_state.get("submitted_project_id", ""),
     help="Provide your own Google Earth Engine / GCP project ID (e.g., my-project-123)",
     key="gee_project_id_input",
-)
+)  
 
-col_submit, col_change = st.sidebar.columns(2)
-with col_submit:
-    submit_project = st.button("Submit Project ID")
-with col_change:
-    change_project = st.button("Change Project ID")
+submit_project = st.sidebar.button("Submit Project ID")
 
-if submit_project:
-    st.session_state["submitted_project_id"] = project_id_input.strip()
-    st.session_state["project_submitted"] = True
-    st.rerun()
-
-if change_project:
-    st.session_state["submitted_project_id"] = ""
-    st.session_state["project_submitted"] = False
-    st.session_state.pop("gee_project_id_input", None)
-    st.rerun()
-
-if not st.session_state["project_submitted"]:
+if not submit_project:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
     st.stop()
 
-project_id = st.session_state.get("submitted_project_id", "").strip()
 if not project_id:
-    st.sidebar.warning("Please enter a valid GEE project ID.")
+    st.sidebar.info("Enter your GEE project ID.")
     st.stop()
 
 try:
