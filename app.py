@@ -413,18 +413,19 @@ if "ee_ready_project" not in st.session_state:
 if "ee_status_msg" not in st.session_state:
     st.session_state["ee_status_msg"] = ""
 
-st.sidebar.text_input(
-    "Enter your GEE Project ID",
-    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-    key="gee_project_id_input",
-)
-submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn", type="primary")
+with st.sidebar.form("gee_project_form", clear_on_submit=False):
+    st.text_input(
+        "Enter your GEE Project ID",
+        help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+        key="gee_project_id_input",
+    )
+    submit_project = st.form_submit_button("Submit Project ID", type="primary")
 
 if submit_project:
     cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
     if cleaned_project_id:
         try:
-            ee_status = init_ee(cleaned_project_id)
+            init_ee(cleaned_project_id)
             st.session_state["submitted_project_id"] = cleaned_project_id
             st.session_state["project_submitted"] = True
             st.session_state["ee_ready_project"] = cleaned_project_id
@@ -432,6 +433,7 @@ if submit_project:
         except Exception as e:
             st.session_state["project_submitted"] = False
             st.session_state["ee_ready_project"] = ""
+            st.session_state["ee_status_msg"] = ""
             st.sidebar.error("GEE initialization failed ❌")
             st.sidebar.write(str(e))
             st.stop()
@@ -471,8 +473,7 @@ def clear_results_state() -> None:
 
 
 def mark_results_dirty() -> None:
-    st.session_state["results_dirty"] = True
-    st.session_state["dirty_reason"] = "params"
+    return
 
 
 def reset_app_state() -> None:
@@ -1440,7 +1441,6 @@ def main():
         "Quick test sites",
         options=list(TEST_SITES.keys()),
         key="site_choice",
-        on_change=mark_results_dirty,
     )
     if site_choice != st.session_state.get("_site_choice_applied"):
         st.session_state["_site_choice_applied"] = site_choice
@@ -1452,7 +1452,6 @@ def main():
             st.session_state["lon_input"] = float(lon0)
             st.session_state["map_view_center"] = [float(lat0), float(lon0)]
             st.session_state["map_view_zoom"] = 7
-            mark_results_dirty()
 
     today = datetime.utcnow().date()
     tomorrow = today + timedelta(days=1)
@@ -1463,7 +1462,6 @@ def main():
         options=["Past acquisitions", "Future pass planning"],
         index=0 if st.session_state["mode"] == "Past acquisitions" else 1,
         key="mode_choice",
-        on_change=mark_results_dirty,
     )
     if mode_choice != st.session_state["mode"]:
         st.session_state["mode"] = mode_choice
@@ -1471,14 +1469,12 @@ def main():
             st.session_state["date_range"] = (tomorrow, tomorrow + timedelta(days=30))
         else:
             st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
-        mark_results_dirty()
         st.rerun()
 
     def on_latlon_change():
         st.session_state["lat"] = float(st.session_state["lat_input"])
         st.session_state["lon"] = float(st.session_state["lon_input"])
         st.session_state["map_view_center"] = [float(st.session_state["lat"]), float(st.session_state["lon"])]
-        mark_results_dirty()
 
     def request_compute() -> None:
         st.session_state["compute_requested"] = True
@@ -1512,14 +1508,13 @@ def main():
         min_value=min_d,
         max_value=max_d,
         key="date_range_widget",
-        on_change=mark_results_dirty,
     )
 
-    if isinstance(date_range, tuple):
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
         start_date, end_date = date_range
     else:
-        start_date = date_range
-        end_date = date_range
+        start_date = date_range[0] if isinstance(date_range, (tuple, list)) else date_range
+        end_date = start_date
 
     if start_date > end_date:
         start_date, end_date = end_date, start_date
@@ -1591,7 +1586,6 @@ def main():
         index=preset_labels.index(default_label),
         help="Short windows for modern constellations; longer windows for early Landsat era.",
         key="sno_window_choice",
-        on_change=mark_results_dirty,
     )
     sno_window_min = dict(SNO_PRESETS).get(sno_choice)
     if sno_window_min is None:
@@ -1615,7 +1609,6 @@ def main():
         step=10,
         help="Past acquisitions counted if image footprint intersects this buffer around the point.",
         key="site_buffer_m",
-        on_change=mark_results_dirty,
     )
 
     sample_reflectance = st.sidebar.checkbox(
@@ -1623,7 +1616,6 @@ def main():
         value=False,
         help="Landsat and Sentinel-2 TOA reflectance sampling has been removed.",
         key="sample_reflectance",
-        on_change=mark_results_dirty,
     )
 
     if st.session_state["mode"] == "Future pass planning":
@@ -1860,20 +1852,23 @@ def main():
     folium.LayerControl().add_to(m)
      
     map_data = st_folium(
-    m,
-    height=450,
-    width="stretch",
-    key="site_map",
-    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
-)
+        m,
+        height=450,
+        width="stretch",
+        key="site_map",
+        returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
+    )
 
-    if map_data:
-       if map_data.get("center"):
-           st.session_state["map_view_center"] = [
-            float(map_data["center"]["lat"]),
-            float(map_data["center"]["lng"]),]
-    if map_data.get("zoom") is not None:
-        st.session_state["map_view_zoom"] = int(map_data["zoom"])
+    if map_data is not None:
+        center_data = map_data.get("center")
+        if center_data is not None:
+            st.session_state["map_view_center"] = [
+                float(center_data["lat"]),
+                float(center_data["lng"]),
+            ]
+        zoom_data = map_data.get("zoom")
+        if zoom_data is not None:
+            st.session_state["map_view_zoom"] = int(zoom_data)
 
 
     def request_map_update(new_lat: float, new_lon: float):
@@ -1911,15 +1906,18 @@ def main():
 
     st.markdown(f"**Selected location:** {st.session_state['lat']:.6f}, {st.session_state['lon']:.6f}")
     legend_missions = st.session_state.get("past_selected", []) if st.session_state.get("mode") == "Past acquisitions" else st.session_state.get("future_selected", [])
+    fallback_bits = []
     if legend_missions:
         legend_html = "".join([
-            f"<div style='display:flex; align-items:center; gap:8px; margin:4px 0;'><span style='font-size:20px; font-weight:900; color:{mission_hex_color(s)};'>★</span><span>{s}</span></div>"
+            f"<div style='display:flex; align-items:center; gap:8px; margin:4px 0;'><span style='font-size:20px; font-weight:900; color:{mission_hex_color(s)};'>★</span><span style='color:#f8f9fa;'>{s}</span></div>"
             for s in legend_missions
         ])
-        rt_html = ""
-        if "runtime_s" in st.session_state:
-            rt_html = f"<div style='margin-top:10px; font-size:22px; font-weight:900; color:#ff4d4f;'>Last compute time: {format_runtime(float(st.session_state['runtime_s']))}</div>"
-        st.markdown(f"<div style='background:#0b1320; color:#f8f9fa; padding:12px 14px; border-radius:12px; border:1px solid #334155; margin:8px 0 12px 0;'><div style='font-size:16px; font-weight:900; margin-bottom:6px;'>Legend</div>{legend_html}<div style='display:flex; align-items:center; gap:8px; margin-top:8px;'><span style='display:inline-block; width:14px; height:14px; border:3px solid #FFD43B; border-radius:50%;'></span><span>SNO ring</span></div>{rt_html}</div>", unsafe_allow_html=True)
+        fallback_bits.append(legend_html)
+        fallback_bits.append("<div style='display:flex; align-items:center; gap:8px; margin-top:8px; color:#f8f9fa;'><span style='display:inline-block; width:14px; height:14px; border:3px solid #FFD43B; border-radius:50%;'></span><span>SNO ring</span></div>")
+    if "runtime_s" in st.session_state:
+        fallback_bits.append(f"<div style='margin-top:10px; font-size:24px; font-weight:900; color:#ff4d4f;'>Compute time: {format_runtime(float(st.session_state['runtime_s']))}</div>")
+    if fallback_bits:
+        st.markdown(f"<div style='background:#0b1320; color:#f8f9fa; padding:12px 14px; border-radius:12px; border:1px solid #334155; margin:8px 0 12px 0;'>" + "".join(fallback_bits) + "</div>", unsafe_allow_html=True)
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
