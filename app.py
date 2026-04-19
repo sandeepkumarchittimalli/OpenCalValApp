@@ -458,6 +458,10 @@ def mark_results_dirty() -> None:
     st.session_state["results_dirty"] = True
 
 
+def has_any_results() -> bool:
+    return any(k in st.session_state for k in ["past_df", "future_df", "past_df_raw", "future_df_raw"])
+
+
 def reset_app_state() -> None:
     clear_results_state()
     st.session_state["results_dirty"] = False
@@ -1685,7 +1689,7 @@ def main():
         m.get_root().html.add_child(folium.Element(runtime_html))
 
     # ---- Overlay Past Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
         df_raw = st.session_state.get("past_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("past_sno", pd.DataFrame())
         selected = st.session_state.get("past_selected", [])
@@ -1772,7 +1776,7 @@ def main():
             m.get_root().html.add_child(folium.Element(legend_html))
 
     # ---- Overlay Future Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
@@ -1842,6 +1846,29 @@ def main():
 
     folium.LayerControl().add_to(m)
      
+    # ---- In-map legend (bottom-left) ----
+    legend_selected = []
+    if st.session_state.get("mode") == "Past acquisitions":
+        legend_selected = st.session_state.get("past_selected", [])
+    elif st.session_state.get("mode") == "Future pass planning":
+        legend_selected = st.session_state.get("future_selected", [])
+    if legend_selected:
+        lines = "".join([f"<div style='margin-bottom:4px;'><span style='color:{mission_hex_color(s)}; font-weight:900;'>★</span> {s}</div>" for s in legend_selected])
+        legend_html = f"""
+        <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+          background: rgba(11,19,32,0.92); color: #f8f9fa;
+          padding: 10px; border: 1px solid #22304a; border-radius: 8px;
+          font-size: 12px; max-width: 320px;">
+          <b>Legend</b>
+          <div style="margin-top:6px;">{lines}</div>
+          <div style="margin-top:8px;">
+            <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
+            SNO rings
+          </div>
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
     map_data = st_folium(
     m,
     height=450,
@@ -1884,19 +1911,8 @@ def main():
 
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
-    # Robust legend outside the map (works better in deployed Streamlit than injected HTML inside the map iframe)
-    if (not st.session_state.get("results_dirty")):
-        legend_selected = []
-        if st.session_state.get("mode") == "Past acquisitions":
-            legend_selected = st.session_state.get("past_selected", [])
-        elif st.session_state.get("mode") == "Future pass planning":
-            legend_selected = st.session_state.get("future_selected", [])
-        if legend_selected:
-            legend_html = "".join(
-                [f'<span style="display:inline-block;margin-right:12px;white-space:nowrap;"><span style="color:{mission_hex_color(s)};font-weight:900;">★</span> {s}</span>' for s in legend_selected]
-            )
-            st.markdown("**Legend**")
-            st.markdown(legend_html + '<span style="display:inline-block;margin-left:8px;white-space:nowrap;"><span style="display:inline-block;width:10px;height:10px;border:3px solid #FFD43B;border-radius:50%;vertical-align:middle;margin-right:6px;"></span>SNO</span>', unsafe_allow_html=True)
+    if st.session_state.get("results_dirty") and has_any_results():
+        st.info("Parameters changed. Showing last computed results on the map and below. Click Compute to update them for the current settings.")
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1910,11 +1926,12 @@ def main():
 
     with tab_over:
         st.subheader("Compute results")
-        if st.session_state.get("results_dirty"):
+        if st.session_state.get("results_dirty") and has_any_results():
+            st.info("Parameters changed. Below you are still seeing the last computed results until you click Compute.")
+        elif st.session_state.get("results_dirty"):
             st.info("Parameters changed. Click Compute to run with the current settings.")
 
-        with st.form("compute_form"):
-            submitted = st.form_submit_button("Compute", type="primary")
+        submitted = st.button("Compute", type="primary", use_container_width=False)
 
         if submitted:
             t_start = time.perf_counter()
@@ -2012,9 +2029,7 @@ def main():
             st.rerun()
 
         # Tables
-        if st.session_state.get("results_dirty"):
-            st.info("No results shown yet for the current settings. Click Compute.")
-        elif st.session_state["mode"] == "Past acquisitions" and "past_df" in st.session_state:
+        if st.session_state["mode"] == "Past acquisitions" and "past_df" in st.session_state:
             df_events_w = st.session_state.get("past_df", pd.DataFrame())
             if df_events_w is None or df_events_w.empty:
                 st.info("No past acquisitions to display (yet).")
