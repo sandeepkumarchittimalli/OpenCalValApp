@@ -1,3 +1,18 @@
+#############################################
+# app.py 
+#
+# Features:
+# - Map at TOP (before tabs)
+# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
+# - Only rerun on true "background click" to set site (not cluster/marker clicks)
+# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
+# - MarkerCluster so all stars are visible (no overlap hiding)
+# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
+# - Runtime shown only total, big + colored (and can be placed on map)
+# - Metrics tab: acquisitfion/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
+# - Time series tabs: only when reflectance sampling enabled
+#############################################
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,9 +43,6 @@ import folium
 from folium.plugins import MousePosition, Draw, MarkerCluster
 from folium.features import DivIcon
 from streamlit_folium import st_folium
-
-
-
 
 st.set_page_config(layout="wide")
 st.title(
@@ -346,6 +358,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
     ),
 }
 
+
 #------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
 
 OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
@@ -382,6 +395,7 @@ def get_user_google_credentials() -> Optional[Credentials]:
         scopes=data["scopes"],
     )
 
+@st.cache_resource(show_spinner=False)
 def init_ee(project_id: str) -> str:
     creds = get_user_google_credentials()
     if creds is None:
@@ -408,34 +422,24 @@ if "google_tokens" not in st.session_state:
 
 st.sidebar.success("Google account connected ✅")
 
-# ------------------- PROJECT ID -------------------
 if "project_submitted" not in st.session_state:
     st.session_state["project_submitted"] = False
 if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
-if "project_id_widget" not in st.session_state:
-    st.session_state["project_id_widget"] = st.session_state.get("submitted_project_id", "")
 
-st.sidebar.text_input(
-    "Enter your GEE Project ID",
-    key="project_id_widget",
-    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-)
-col_pid1, col_pid2 = st.sidebar.columns([1.3, 1])
-with col_pid1:
-    submit_project = st.button("Submit Project ID", type="primary", use_container_width=True)
-with col_pid2:
-    change_project = st.button("Change Project ID", use_container_width=True)
+with st.sidebar.form("gee_project_form"):
+    project_id_input = st.text_input(
+        "Enter your GEE Project ID",
+        value=st.session_state["submitted_project_id"],
+        help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+        key="project_id_input",
+    )
+    submit_project = st.form_submit_button("Submit Project ID")
 
 if submit_project:
-    cleaned_project_id = st.session_state.get("project_id_widget", "").strip()
+    cleaned_project_id = project_id_input.strip()
     st.session_state["submitted_project_id"] = cleaned_project_id
     st.session_state["project_submitted"] = bool(cleaned_project_id)
-
-if change_project:
-    st.session_state["project_submitted"] = False
-    st.session_state["submitted_project_id"] = ""
-    st.session_state["project_id_widget"] = ""
     st.rerun()
 
 if not st.session_state["project_submitted"]:
@@ -447,6 +451,21 @@ if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
+if st.sidebar.button("Change Project ID"):
+    st.session_state["project_submitted"] = False
+    st.session_state["submitted_project_id"] = ""
+    st.cache_resource.clear()
+    st.rerun()
+
+if st.sidebar.button("Reset App"):
+    keys_to_keep = {"google_tokens"}
+    for k in list(st.session_state.keys()):
+        if k not in keys_to_keep:
+            del st.session_state[k]
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
+
 try:
     ee_status = init_ee(project_id)
     st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
@@ -454,24 +473,6 @@ except Exception as e:
     st.sidebar.error("GEE initialization failed ❌")
     st.sidebar.write(str(e))
     st.stop()
-
-st.sidebar.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-st.sidebar.markdown(
-    """
-    <style>
-    div[data-testid="stButton"] button[kind="secondary"] {
-        border-radius: 10px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-if st.sidebar.button("Reset App", type="secondary", use_container_width=True):
-    keys_to_keep = {"google_tokens"}
-    for k in list(st.session_state.keys()):
-        if k not in keys_to_keep:
-            del st.session_state[k]
-    st.rerun()
 
 # ------------------- UTILS -------------------
 
@@ -924,31 +925,27 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
 
 # ------------------- FUTURE (TLE) -------------------
 
-def check_future_inputs(sat_names: Tuple[str, ...]) -> List[str]:
-    errors: List[str] = []
-    for sat in sat_names:
-        try:
-            norad = SATELLITE_NORAD.get(sat)
-            if norad is None:
-                errors.append(f"{sat}: missing NORAD ID")
-                continue
-            tle_text = fetch_tle_from_celestrak(norad)
-            lines = [l.strip() for l in tle_text.splitlines() if l.strip()]
-            if len(lines) < 3:
-                errors.append(f"{sat}: invalid TLE response")
-        except Exception as e:
-            errors.append(f"{sat}: {e}")
-    return errors
-
-
 def fetch_tle_from_celestrak(norad_id: int) -> str:
-    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    tle_text = r.text.strip()
-    if tle_text.count("\n") < 2:
-        raise ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text}")
-    return tle_text
+    urls = [
+        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+        f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+    ]
+    headers = {"User-Agent": "OpenCalValPlan/1.0"}
+
+    last_err = None
+    for timeout_s in (10, 20, 30):
+        for url in urls:
+            try:
+                r = requests.get(url, timeout=timeout_s, headers=headers)
+                r.raise_for_status()
+                tle_text = r.text.strip()
+                if tle_text.count("\n") >= 2:
+                    return tle_text
+            except Exception as e:
+                last_err = e
+                continue
+
+    raise RuntimeError(f"Failed to fetch TLE for NORAD {norad_id}: {last_err}")
 
 
 @st.cache_resource(show_spinner=False)
@@ -1049,7 +1046,8 @@ def predict_future_passes_pyorbital(
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception:
+        except Exception as e:
+            st.session_state.setdefault("future_fetch_errors", {})[sat] = str(e)
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1153,7 +1151,8 @@ def predict_future_passes_skyfield(
             continue
         try:
             sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception:
+        except Exception as e:
+            st.session_state.setdefault("future_fetch_errors", {})[sat] = str(e)
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1550,9 +1549,9 @@ def main():
     )
 
     sample_reflectance = st.sidebar.checkbox(
-        "Also sample MODIS/VIIRS reflectance at site (slower)",
+        "Also sample reflectance at site (slower)",
         value=False,
-        help="Landsat and Sentinel-2 TOA reflectance sampling is disabled in the cloud app.",
+        help="Enables time series tabs (when those missions support reflectance sampling).",
         key="sample_reflectance"
     )
 
@@ -1638,7 +1637,7 @@ def main():
              background: rgba(11, 19, 32, 0.92);
              padding: 10px 12px; border-radius: 12px;
              border: 1px solid #22304a;">
-          <span style="font-size: 24px; font-weight: 900; color: #ff3333; text-shadow: 0 0 4px rgba(255,255,255,0.2);">
+          <span style="font-size: 18px; font-weight: 900; color: #ff3333;">
             Runtime: {rt_txt}
           </span>
         </div>
@@ -1649,7 +1648,7 @@ def main():
     if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
         df_raw = st.session_state.get("past_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("past_sno", pd.DataFrame())
-        selected = st.session_state.get("past_selected", list(st.session_state.get("selected_past", [])))
+        selected = st.session_state.get("past_selected", [])
 
         star_cluster = MarkerCluster(
             name="Acquisitions ★",
@@ -1722,7 +1721,8 @@ def main():
               background: rgba(11,19,32,0.92); color: #f8f9fa;
               padding: 10px; border: 1px solid #22304a; border-radius: 8px;
               font-size: 12px; max-width: 300px;">
-              <div style="margin-top:0px;">{lines}</div>
+              <b>Legend</b>
+              <div style="margin-top:6px;">{lines}</div>
               <div style="margin-top:8px;">
                 <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
                 SNO
@@ -1735,7 +1735,7 @@ def main():
     if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
-        selected = st.session_state.get("future_selected", list(st.session_state.get("selected_future", [])))
+        selected = st.session_state.get("future_selected", [])
 
         star_cluster = MarkerCluster(name="Passes ★").add_to(m)
 
@@ -1790,7 +1790,8 @@ def main():
               background: rgba(11,19,32,0.92); color:#f8f9fa;
               padding: 10px; border: 1px solid #22304a; border-radius: 8px;
               font-size: 12px; max-width: 300px;">
-              <div style="margin-top:0px;">{lines}</div>
+              <b>Legend</b>
+              <div style="margin-top:6px;">{lines}</div>
               <div style="margin-top:8px;">
                 <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
                 SNO
@@ -1799,37 +1800,43 @@ def main():
             """
             m.get_root().html.add_child(folium.Element(legend_html))
 
-    folium.LayerControl(collapsed=False).add_to(m)
-
+    folium.LayerControl().add_to(m)
+     
     map_data = st_folium(
-        m,
-        height=520,
-        width=None,
-        key="site_map",
-        returned_objects=["last_clicked", "last_object_clicked", "last_active_drawing", "last_drawn", "all_drawings", "center", "zoom"],
-    )
+    m,
+    height=450,
+    width="stretch",
+    key="site_map",
+    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
+)
 
-    if map_data is not None:
-        center_data = map_data.get("center")
-        if center_data and "lat" in center_data and "lng" in center_data:
-            st.session_state["map_view_center"] = [float(center_data["lat"]), float(center_data["lng"])]
-        zoom_data = map_data.get("zoom")
-        if zoom_data is not None:
-            st.session_state["map_view_zoom"] = int(zoom_data)
+    if map_data:
+       if map_data.get("center"):
+           st.session_state["map_view_center"] = [
+            float(map_data["center"]["lat"]),
+            float(map_data["center"]["lng"]),]
+    if map_data.get("zoom") is not None:
+        st.session_state["map_view_zoom"] = int(map_data["zoom"])
+
 
     def request_map_update(new_lat: float, new_lon: float):
-        this_click = (round(new_lat, 6), round(new_lon, 6))
-        if st.session_state.get("_last_click") != this_click:
-            st.session_state["_last_click"] = this_click
-            st.session_state["map_lat"] = float(new_lat)
-            st.session_state["map_lon"] = float(new_lon)
+    	this_click = (round(new_lat, 6), round(new_lon, 6))
+    	if st.session_state.get("_last_click") != this_click:
+           st.session_state["_last_click"] = this_click
+           st.session_state["map_lat"] = float(new_lat)
+           st.session_state["map_lon"] = float(new_lon)
+           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
+           #st.rerun() 
 
+
+     # Only background click will update site
     if map_data and map_data.get("last_clicked") and not map_data.get("last_object_clicked"):
         request_map_update(
-            float(map_data["last_clicked"]["lat"]),
-            float(map_data["last_clicked"]["lng"]),
-        )
-
+        float(map_data["last_clicked"]["lat"]),
+        float(map_data["last_clicked"]["lng"]),
+    )
+   
+    # Draw/edit marker-to-set
     candidate = None
     if map_data:
         candidate = map_data.get("last_active_drawing") or map_data.get("last_drawn")
@@ -1838,28 +1845,9 @@ def main():
     if candidate:
         geom = candidate.get("geometry", {})
         if geom.get("type") == "Point":
-            coords = geom.get("coordinates", None)
+            coords = geom.get("coordinates", None)  # [lon, lat]
             if coords and len(coords) == 2:
                 request_map_update(float(coords[1]), float(coords[0]))
-
-    if "runtime_s" in st.session_state:
-        st.markdown(
-            f"<div style='margin-top:8px; font-size:20px; font-weight:800; color:#d62828;'>Compute time: {format_runtime(float(st.session_state['runtime_s']))}</div>",
-            unsafe_allow_html=True,
-        )
-
-    current_legend = list(selected_past) if st.session_state["mode"] == "Past acquisitions" else list(selected_future)
-    if current_legend:
-        legend_rows = "".join([
-            f"<div style='margin:2px 0;'><span style='color:{mission_hex_color(s)}; font-weight:900; font-size:18px;'>★</span> {s}</div>"
-            for s in current_legend
-        ])
-        st.markdown(
-            "<div style='margin-top:6px; padding:10px 12px; border:1px solid #d9d9d9; border-radius:10px; background:#fafafa; width:fit-content;'>"
-            + legend_rows +
-            "<div style='margin-top:6px;'><span style='display:inline-block; width:12px; height:12px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px; vertical-align:middle;'></span>SNO ring</div></div>",
-            unsafe_allow_html=True,
-        )
 
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
@@ -1924,10 +1912,7 @@ def main():
                 if not selected_future:
                     st.warning("Select at least one satellite for future planning.")
                 else:
-                    future_input_errors = check_future_inputs(tuple(selected_future))
-                    st.session_state["future_input_errors"] = future_input_errors
-                    if future_input_errors:
-                        st.warning("Some future-pass inputs failed in deployment:\n- " + "\n- ".join(future_input_errors))
+                    st.session_state["future_fetch_errors"] = {}
                     with st.spinner("Predicting future passes..."):
                         use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
                         if use_skyfield:
@@ -1947,14 +1932,17 @@ def main():
                                 min_elev_deg=float(min_elev_deg),
                             )
 
+                    future_errors = st.session_state.get("future_fetch_errors", {})
+                    if future_errors:
+                        msg = "Some future-pass inputs failed in deployment:\n\n" + "\n".join(
+                            [f"{k}: {v}" for k, v in future_errors.items()]
+                        )
+                        st.warning(msg)
                     if df_pred.empty:
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        if st.session_state.get("future_input_errors"):
-                            st.warning("No future passes found. The deployment also reported TLE/input errors above.")
-                        else:
-                            st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -2091,8 +2079,9 @@ def main():
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
+
+
 if __name__ == "__main__":
     main()
-
 
 
