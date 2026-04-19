@@ -1,3 +1,18 @@
+#############################################
+# app.py 
+#
+# Features:
+# - Map at TOP (before tabs)
+# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
+# - Only rerun on true "background click" to set site (not cluster/marker clicks)
+# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
+# - MarkerCluster so all stars are visible (no overlap hiding)
+# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
+# - Runtime shown only total, big + colored (and can be placed on map)
+# - Metrics tab: acquisitfion/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
+# - Time series tabs: only when reflectance sampling enabled
+#############################################
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,8 +28,6 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 import ee
-from itsdangerous import URLSafeSerializer, BadSignature
-from google.oauth2.credentials import Credentials
 from pyorbital.orbital import Orbital
 
 # Skyfield optional (future)
@@ -28,9 +41,6 @@ import folium
 from folium.plugins import MousePosition, Draw, MarkerCluster
 from folium.features import DivIcon
 from streamlit_folium import st_folium
-
-
-
 
 st.set_page_config(layout="wide")
 st.title(
@@ -254,7 +264,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_4",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 5 TM": PastMission(
         key="LANDSAT 5 TM", label="Landsat 5 (TM) TOA",
@@ -262,7 +273,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_5",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 7": PastMission(
         key="LANDSAT 7", label="Landsat 7 (ETM+) TOA (decommissioned, past data exists)",
@@ -270,7 +282,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_7",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 8": PastMission(
         key="LANDSAT 8", label="Landsat 8 (OLI) TOA",
@@ -278,7 +291,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_8",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 9": PastMission(
         key="LANDSAT 9", label="Landsat 9 (OLI-2) TOA",
@@ -286,7 +300,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_9",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
 
     # Sentinel-2 TOA
@@ -296,7 +311,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2A",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "SENTINEL-2B": PastMission(
         key="SENTINEL-2B", label="Sentinel-2B TOA",
@@ -304,7 +320,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2B",),
-        sample_scale_m=None, sample_bands=None, sample_band_scales=None
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
 
     # MODIS
@@ -339,167 +356,77 @@ PAST_MISSIONS: Dict[str, PastMission] = {
     ),
 }
 
-#------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
 
-OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
-SIGNING_SECRET = st.secrets["google_oauth"]["signing_secret"]
-serializer = URLSafeSerializer(SIGNING_SECRET, salt="oauth-return")
 
-def finish_oauth_if_needed():
-    qp = st.query_params
-    signed = qp.get("oauth_return")
-    if not signed:
-        return
-
-    try:
-        payload = serializer.loads(signed)
-    except BadSignature:
-        st.error("OAuth return invalid.")
-        st.stop()
-
-    st.session_state["google_tokens"] = payload
-    st.query_params.clear()
-    st.rerun()
-
-def get_user_google_credentials() -> Optional[Credentials]:
-    data = st.session_state.get("google_tokens")
-    if not data:
-        return None
-
-    return Credentials(
-        token=data["token"],
-        refresh_token=data.get("refresh_token"),
-        token_uri=data["token_uri"],
-        client_id=data["client_id"],
-        client_secret=data["client_secret"],
-        scopes=data["scopes"],
-    )
-
-def init_ee(project_id: str) -> str:
-    creds = get_user_google_credentials()
-    if creds is None:
-        raise RuntimeError("User is not connected to Google Earth Engine.")
-    ee.Initialize(credentials=creds, project=project_id)
-    return f"user_oauth(project={project_id})"
-
-finish_oauth_if_needed()
-
-st.sidebar.header("Google Earth Engine Login")
-st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
+# ------------------- GEE INIT -------------------
 st.sidebar.info(
-    "Sign in with your Google account, then enter your own Earth Engine project ID. "
-    "Please review Privacy & Usage before using this app."
+    "Please enter your Google Earth Engine Project ID and click Submit."
 )
+st.sidebar.header("GEE Project ID")
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
 
-if "google_tokens" not in st.session_state:
-    st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
-    st.sidebar.warning("Connect your Google account first.")
-    st.stop()
-
-st.sidebar.success("Google account connected ✅")
-
-# ------------------- PROJECT ID -------------------
-if "project_submitted" not in st.session_state:
-    st.session_state["project_submitted"] = False
-if "submitted_project_id" not in st.session_state:
-    st.session_state["submitted_project_id"] = ""
+if "gee_submitted" not in st.session_state:
+    st.session_state["gee_submitted"] = False
+if "latest_projectid" not in st.session_state:
+    st.session_state["latest_projectid"] = ""
 if "gee_project_id_input" not in st.session_state:
-    st.session_state["gee_project_id_input"] = st.session_state["submitted_project_id"]
-if "ee_ready_project" not in st.session_state:
-    st.session_state["ee_ready_project"] = ""
-if "ee_status_msg" not in st.session_state:
-    st.session_state["ee_status_msg"] = ""
+    st.session_state["gee_project_id_input"] = ""
 
-with st.sidebar.form("gee_project_form", clear_on_submit=False):
+with st.sidebar.form("gee_form", clear_on_submit=False):
     st.text_input(
         "Enter your GEE Project ID",
+        value=st.session_state.get("latest_projectid", ""),
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
         key="gee_project_id_input",
     )
-    submit_project = st.form_submit_button("Submit Project ID", type="primary")
+    submitted = st.form_submit_button("Submit Project ID", type="primary")
 
-if submit_project:
-    cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
-    if cleaned_project_id:
-        try:
-            init_ee(cleaned_project_id)
-            st.session_state["submitted_project_id"] = cleaned_project_id
-            st.session_state["project_submitted"] = True
-            st.session_state["ee_ready_project"] = cleaned_project_id
-            st.session_state["ee_status_msg"] = f"GEE initialized successfully ✅ ({cleaned_project_id})"
-        except Exception as e:
-            st.session_state["project_submitted"] = False
-            st.session_state["ee_ready_project"] = ""
-            st.session_state["ee_status_msg"] = ""
-            st.sidebar.error("GEE initialization failed ❌")
-            st.sidebar.write(str(e))
-            st.stop()
+if submitted:
+    entered_project_id = st.session_state.get("gee_project_id_input", "").strip()
+    if entered_project_id:
+        st.session_state["latest_projectid"] = entered_project_id
+        st.session_state["gee_submitted"] = True
+        st.cache_resource.clear()
+        st.rerun()
     else:
-        st.session_state["project_submitted"] = False
+        st.session_state["gee_submitted"] = False
         st.sidebar.warning("Please enter a valid GEE Project ID.")
         st.stop()
 
-if not st.session_state["project_submitted"]:
-    st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
+if not st.session_state["gee_submitted"]:
     st.stop()
 
-project_id = st.session_state["submitted_project_id"].strip()
-if not project_id:
+latest_projectid = st.session_state["latest_projectid"].strip()
+if not latest_projectid:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
-st.sidebar.success(st.session_state.get("ee_status_msg", f"GEE initialized successfully ✅ ({project_id})"))
-
-if st.sidebar.button("Change Project ID", key="change_project_id_btn"):
-    st.session_state["project_submitted"] = False
-    st.session_state["submitted_project_id"] = ""
+if st.sidebar.button("Change Project ID"):
+    st.session_state["gee_submitted"] = False
+    st.session_state["latest_projectid"] = ""
     st.session_state["gee_project_id_input"] = ""
-    st.session_state["ee_ready_project"] = ""
-    st.session_state["ee_status_msg"] = ""
+    st.cache_resource.clear()
     st.rerun()
 
-RESULT_STATE_KEYS = [
-    "past_df_raw", "past_df", "past_sno", "past_selected",
-    "future_df_raw", "future_df", "future_sno", "future_selected",
-    "runtime_s", "last_compute_params",
-]
+@st.cache_resource(show_spinner=False)
+def init_ee(project_id: str) -> str:
+    try:
+        ee.Initialize(project=project_id)
+        return f"user_account(project={project_id})"
+    except Exception as e:
+        raise RuntimeError(
+            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
+        )
 
-def clear_results_state() -> None:
-    for key in RESULT_STATE_KEYS:
-        st.session_state.pop(key, None)
-
-
-def mark_results_dirty() -> None:
-    return
-
-
-def reset_app_state() -> None:
-    clear_results_state()
-    st.session_state["results_dirty"] = False
-    st.session_state["lat"] = float(DEFAULT_LAT)
-    st.session_state["lon"] = float(DEFAULT_LON)
-    st.session_state["lat_input"] = float(DEFAULT_LAT)
-    st.session_state["lon_input"] = float(DEFAULT_LON)
-    st.session_state["_last_click"] = None
-    st.session_state["mode"] = "Past acquisitions"
-    today = datetime.utcnow().date()
-    yesterday = today - timedelta(days=1)
-    st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
-    st.session_state["site_choice"] = "Crater Lake (OR)"
-    st.session_state["_site_choice_applied"] = "Crater Lake (OR)"
-    st.session_state["map_view_center"] = [float(DEFAULT_LAT), float(DEFAULT_LON)]
-    st.session_state["map_view_zoom"] = 7
-    st.session_state["selected_past"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
-    st.session_state["selected_future"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
-    st.session_state["sno_window_choice"] = "30 min"
-    st.session_state.pop("sno_window_custom", None)
-    st.session_state["site_buffer_m"] = int(DEFAULT_SITE_BUFFER_M)
-    st.session_state["sample_reflectance"] = False
-    st.session_state["overpass_tol_km"] = float(DEFAULT_OVERPASS_TOL_KM)
-    st.session_state["min_elev_deg"] = float(MIN_ELEV_DEG_DEFAULT)
+try:
+    ee_status = init_ee(latest_projectid)
+    st.sidebar.success(f"GEE initialized successfully ✅ ({latest_projectid})")
+except Exception as e:
+    st.sidebar.error("GEE initialization failed ❌")
+    st.sidebar.write(str(e))
+    st.stop()
 
 # ------------------- UTILS -------------------
 
@@ -573,51 +500,6 @@ def format_dt_minutes(dt_min: float) -> str:
         return f"{dt_hr:.2f} hr"
     dt_days = dt_hr / 24.0
     return f"{dt_days:.2f} days"
-
-
-def add_map_runtime_overlay(m: folium.Map, runtime_s: float) -> None:
-    rt_txt = format_runtime(runtime_s)
-    runtime_html = f"""
-    <div style="position: fixed; top: 14px; right: 14px; z-index: 9999;
-         background: rgba(11, 19, 32, 0.95);
-         padding: 12px 14px; border-radius: 12px;
-         border: 2px solid #ff6b6b; box-shadow: 0 0 12px rgba(255,107,107,0.35);">
-      <div style="font-size: 13px; font-weight: 700; color: #ffd8a8; letter-spacing: 0.3px;">
-        LAST COMPUTE TIME
-      </div>
-      <div style="font-size: 24px; font-weight: 900; color: #ff4d4f; line-height: 1.2;">
-        {rt_txt}
-      </div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(runtime_html))
-
-
-def add_map_legend_overlay(m: folium.Map, missions: List[str]) -> None:
-    if not missions:
-        return
-    mission_lines = "".join(
-        [
-            f"<div style='margin: 4px 0; font-size: 13px; font-weight: 700;'>"
-            f"<span style='display:inline-block; width:18px; text-align:center; color:{mission_hex_color(s)}; "
-            f"font-size:18px; font-weight:900;'>★</span> {s}</div>"
-            for s in missions
-        ]
-    )
-    legend_html = f"""
-    <div style="position: fixed; bottom: 26px; left: 14px; z-index: 9999;
-      background: rgba(11, 19, 32, 0.95); color: #f8f9fa;
-      padding: 12px 14px; border: 1px solid #334155; border-radius: 12px;
-      box-shadow: 0 0 12px rgba(0,0,0,0.28); min-width: 210px;">
-      <div style="font-size: 14px; font-weight: 900; color: #ffffff; margin-bottom: 6px;">Legend</div>
-      {mission_lines}
-      <div style="margin-top: 8px; font-size: 13px; font-weight: 700;">
-        <span style="display:inline-block; width:12px; height:12px; border:3px solid #FFD43B;
-        border-radius:50%; margin-right:8px; vertical-align:middle;"></span>SNO ring
-      </div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(legend_html))
 
 
 def add_star(layer, lat, lon, color_hex="#00FFFF", tooltip="", popup_html=""):
@@ -808,7 +690,7 @@ def gee_past_acquisitions(
     sample_reflectance: bool,
     max_results_per_collection: int = 5000,  # avoid EE abort
 ) -> pd.DataFrame:
-    init_ee(st.session_state["submitted_project_id"])
+    init_ee(latest_projectid)
 
     pt = _ee_point(lon, lat)
     site = _ee_buffer(lon, lat, float(site_buffer_m))
@@ -1005,6 +887,19 @@ def fetch_tle_from_celestrak(norad_id: int) -> str:
     if tle_text.count("\n") < 2:
         raise ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text}")
     return tle_text
+
+
+def future_prediction_diagnostics(sat_names: Tuple[str, ...]) -> List[str]:
+    errors: List[str] = []
+    for sat in sat_names:
+        if sat not in SATELLITE_NORAD:
+            errors.append(f"{sat}: missing NORAD ID")
+            continue
+        try:
+            _ = fetch_tle_from_celestrak(SATELLITE_NORAD[sat])
+        except Exception as e:
+            errors.append(f"{sat}: {e}")
+    return errors
 
 
 @st.cache_resource(show_spinner=False)
@@ -1411,12 +1306,6 @@ def main():
         st.session_state["date_range"] = (today - timedelta(days=90), today - timedelta(days=1))
     if "site_choice" not in st.session_state:
         st.session_state["site_choice"] = "Crater Lake (OR)"
-    if "results_dirty" not in st.session_state:
-        st.session_state["results_dirty"] = False
-    if "compute_requested" not in st.session_state:
-        st.session_state["compute_requested"] = False
-    if "dirty_reason" not in st.session_state:
-        st.session_state["dirty_reason"] = None
 
     # Apply map updates before widgets
     if "map_lat" in st.session_state and "map_lon" in st.session_state:
@@ -1432,7 +1321,13 @@ def main():
     if "map_view_zoom" not in st.session_state:
         st.session_state["map_view_zoom"] = 7
 
-    st.caption(f"Earth Engine project: {st.session_state['submitted_project_id']}")
+    # GEE init
+    try:
+        mode_gee = init_ee(latest_projectid)
+        st.caption(f"Earth Engine initialized using: {mode_gee}")
+    except Exception as e:
+        st.error(str(e))
+        st.stop()
 
     # Sidebar
     st.sidebar.header("Site & Period")
@@ -1440,7 +1335,7 @@ def main():
     site_choice = st.sidebar.selectbox(
         "Quick test sites",
         options=list(TEST_SITES.keys()),
-        key="site_choice",
+        key="site_choice"
     )
     if site_choice != st.session_state.get("_site_choice_applied"):
         st.session_state["_site_choice_applied"] = site_choice
@@ -1476,9 +1371,6 @@ def main():
         st.session_state["lon"] = float(st.session_state["lon_input"])
         st.session_state["map_view_center"] = [float(st.session_state["lat"]), float(st.session_state["lon"])]
 
-    def request_compute() -> None:
-        st.session_state["compute_requested"] = True
-
     st.sidebar.number_input(
         "Latitude (deg)",
         min_value=-90.0, max_value=90.0,
@@ -1510,11 +1402,15 @@ def main():
         key="date_range_widget",
     )
 
-    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
-        start_date, end_date = date_range
+    pending_range = date_range if isinstance(date_range, (list, tuple)) else [date_range]
+    if len(pending_range) == 0:
+        start_date, end_date = st.session_state["date_range"]
+    elif len(pending_range) == 1:
+        start_date = pending_range[0]
+        end_date = pending_range[0]
     else:
-        start_date = date_range[0] if isinstance(date_range, (tuple, list)) else date_range
-        end_date = start_date
+        start_date = pending_range[0]
+        end_date = pending_range[1]
 
     if start_date > end_date:
         start_date, end_date = end_date, start_date
@@ -1541,8 +1437,7 @@ def main():
             "Select missions (past acquisitions in GEE)",
             options=list(PAST_MISSIONS.keys()),
             default=["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"],
-            key="selected_past",
-            on_change=mark_results_dirty,
+            key="selected_past"
         )
         selected_future = []
     else:
@@ -1550,8 +1445,7 @@ def main():
             "Select satellites (future via TLE)",
             options=list(SATELLITE_NORAD.keys()),
             default=["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"],
-            key="selected_future",
-            on_change=mark_results_dirty,
+            key="selected_future"
         )
         selected_past = []
 
@@ -1585,7 +1479,7 @@ def main():
         options=preset_labels,
         index=preset_labels.index(default_label),
         help="Short windows for modern constellations; longer windows for early Landsat era.",
-        key="sno_window_choice",
+        key="sno_window_choice"
     )
     sno_window_min = dict(SNO_PRESETS).get(sno_choice)
     if sno_window_min is None:
@@ -1596,8 +1490,7 @@ def main():
             value=60,
             step=30,
             help="Enter minutes (up to 10 days).",
-            key="sno_window_custom",
-            on_change=mark_results_dirty,
+            key="sno_window_custom"
         )
     sno_window_min = float(sno_window_min)
     st.session_state["sno_window_min"] = sno_window_min
@@ -1608,14 +1501,14 @@ def main():
         value=int(DEFAULT_SITE_BUFFER_M),
         step=10,
         help="Past acquisitions counted if image footprint intersects this buffer around the point.",
-        key="site_buffer_m",
+        key="site_buffer_m"
     )
 
     sample_reflectance = st.sidebar.checkbox(
-        "Also sample reflectance at site for MODIS/VIIRS only (slower)",
+        "Also sample reflectance at site (slower)",
         value=False,
-        help="Landsat and Sentinel-2 TOA reflectance sampling has been removed.",
-        key="sample_reflectance",
+        help="Enables time series tabs (when those missions support reflectance sampling).",
+        key="sample_reflectance"
     )
 
     if st.session_state["mode"] == "Future pass planning":
@@ -1624,16 +1517,14 @@ def main():
             min_value=1.0, max_value=2000.0,
             value=float(DEFAULT_OVERPASS_TOL_KM),
             step=1.0,
-            key="overpass_tol_km",
-            on_change=mark_results_dirty,
+            key="overpass_tol_km"
         )
         min_elev_deg = st.sidebar.slider(
             "Minimum elevation (deg)",
             min_value=0.0, max_value=30.0,
             value=float(MIN_ELEV_DEG_DEFAULT),
             step=1.0,
-            key="min_elev_deg",
-            on_change=mark_results_dirty,
+            key="min_elev_deg"
         )
         future_engine = st.sidebar.radio(
             "Future engine",
@@ -1643,42 +1534,16 @@ def main():
             ],
             index=0 if SKYFIELD_AVAILABLE else 1,
             help="Install Skyfield: pip install skyfield sgp4",
-            key="future_engine",
-            on_change=mark_results_dirty,
+            key="future_engine"
         )
     else:
         overpass_tol_km = float(DEFAULT_OVERPASS_TOL_KM)
         min_elev_deg = float(MIN_ELEV_DEG_DEFAULT)
         future_engine = "Pyorbital (fallback)"
 
-    st.sidebar.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
-    st.sidebar.markdown(
-        "<div style='font-size:0.95rem; font-weight:700; color:#d9480f; margin-top:8px;'>Reset everything</div>",
-        unsafe_allow_html=True,
-    )
-    if st.sidebar.button("Reset App", type="primary", use_container_width=True):
-        reset_app_state()
-        st.rerun()
-
-    current_compute_params = {
-        "mode": st.session_state["mode"],
-        "lat": round(float(st.session_state["lat"]), 6),
-        "lon": round(float(st.session_state["lon"]), 6),
-        "start_date": start_date_str,
-        "end_date": end_date_str,
-        "selected_past": tuple(selected_past),
-        "selected_future": tuple(selected_future),
-        "sno_window_min": float(sno_window_min),
-        "site_buffer_m": float(site_buffer_m),
-        "sample_reflectance": bool(sample_reflectance),
-        "overpass_tol_km": float(overpass_tol_km),
-        "min_elev_deg": float(min_elev_deg),
-        "future_engine": future_engine,
-    }
-
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
-    st.caption("Click empty map area to set the site. Zoom and pan should stay where you leave them.")
+    st.caption("Zoom/pan/cluster click will NOT reset the map. Click empty map area to set site.")
 
     lat = float(st.session_state["lat"])
     lon = float(st.session_state["lon"])
@@ -1719,6 +1584,21 @@ def main():
         },
         edit_options={"edit": True, "remove": True},
     ).add_to(m)
+
+    # ----- runtime overlay on map (optional, shown when available) -----
+    if "runtime_s" in st.session_state:
+        rt_txt = format_runtime(float(st.session_state["runtime_s"]))
+        runtime_html = f"""
+        <div style="position: fixed; top: 12px; right: 14px; z-index: 9999;
+             background: rgba(11, 19, 32, 0.92);
+             padding: 10px 12px; border-radius: 12px;
+             border: 1px solid #22304a;">
+          <span style="font-size: 18px; font-weight: 900; color: #ff3333;">
+            Runtime: {rt_txt}
+          </span>
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(runtime_html))
 
     # ---- Overlay Past Results ----
     if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
@@ -1788,6 +1668,24 @@ def main():
                     except Exception:
                         continue
 
+        # legend with dark background for visibility
+        legend_items = [(s, mission_hex_color(s)) for s in selected]
+        if legend_items:
+            lines = "".join([f"<div><span style='color:{c}; font-weight:900;'>★</span> {lab}</div>" for lab, c in legend_items])
+            legend_html = f"""
+            <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+              background: rgba(11,19,32,0.92); color: #f8f9fa;
+              padding: 10px; border: 1px solid #22304a; border-radius: 8px;
+              font-size: 12px; max-width: 300px;">
+              <b>Legend</b>
+              <div style="margin-top:6px;">{lines}</div>
+              <div style="margin-top:8px;">
+                <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
+                SNO
+              </div>
+            </div>
+            """
+            m.get_root().html.add_child(folium.Element(legend_html))
 
     # ---- Overlay Future Results ----
     if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
@@ -1840,48 +1738,51 @@ def main():
                     except Exception:
                         continue
 
-    legend_missions = []
-    if st.session_state.get("mode") == "Past acquisitions":
-        legend_missions = st.session_state.get("past_selected", [])
-    else:
-        legend_missions = st.session_state.get("future_selected", [])
-    add_map_legend_overlay(m, legend_missions)
-    if "runtime_s" in st.session_state:
-        add_map_runtime_overlay(m, float(st.session_state["runtime_s"]))
+        legend_items = [(s, mission_hex_color(s)) for s in selected]
+        if legend_items:
+            lines = "".join([f"<div><span style='color:{c}; font-weight:900;'>★</span> {lab}</div>" for lab, c in legend_items])
+            legend_html = f"""
+            <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
+              background: rgba(11,19,32,0.92); color:#f8f9fa;
+              padding: 10px; border: 1px solid #22304a; border-radius: 8px;
+              font-size: 12px; max-width: 300px;">
+              <b>Legend</b>
+              <div style="margin-top:6px;">{lines}</div>
+              <div style="margin-top:8px;">
+                <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
+                SNO
+              </div>
+            </div>
+            """
+            m.get_root().html.add_child(folium.Element(legend_html))
 
     folium.LayerControl().add_to(m)
      
     map_data = st_folium(
-        m,
-        height=450,
-        width="stretch",
-        key="site_map",
-        returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
-    )
+    m,
+    height=450,
+    width="stretch",
+    key="site_map",
+    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
+)
 
-    if map_data is not None:
-        center_data = map_data.get("center")
-        if center_data is not None:
-            st.session_state["map_view_center"] = [
-                float(center_data["lat"]),
-                float(center_data["lng"]),
-            ]
-        zoom_data = map_data.get("zoom")
-        if zoom_data is not None:
-            st.session_state["map_view_zoom"] = int(zoom_data)
+    if map_data:
+       if map_data.get("center"):
+           st.session_state["map_view_center"] = [
+            float(map_data["center"]["lat"]),
+            float(map_data["center"]["lng"]),]
+    if map_data.get("zoom") is not None:
+        st.session_state["map_view_zoom"] = int(map_data["zoom"])
 
 
     def request_map_update(new_lat: float, new_lon: float):
-        this_click = (round(new_lat, 6), round(new_lon, 6))
-        if st.session_state.get("_last_click") != this_click:
-            st.session_state["_last_click"] = this_click
-            st.session_state["map_lat"] = float(new_lat)
-            st.session_state["map_lon"] = float(new_lon)
-            st.session_state["lat"] = float(new_lat)
-            st.session_state["lon"] = float(new_lon)
-            st.session_state["lat_input"] = float(new_lat)
-            st.session_state["lon_input"] = float(new_lon)
-            st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
+    	this_click = (round(new_lat, 6), round(new_lon, 6))
+    	if st.session_state.get("_last_click") != this_click:
+           st.session_state["_last_click"] = this_click
+           st.session_state["map_lat"] = float(new_lat)
+           st.session_state["map_lon"] = float(new_lon)
+           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
+           #st.rerun() 
 
 
      # Only background click will update site
@@ -1904,24 +1805,11 @@ def main():
             if coords and len(coords) == 2:
                 request_map_update(float(coords[1]), float(coords[0]))
 
-    st.markdown(f"**Selected location:** {st.session_state['lat']:.6f}, {st.session_state['lon']:.6f}")
-    legend_missions = st.session_state.get("past_selected", []) if st.session_state.get("mode") == "Past acquisitions" else st.session_state.get("future_selected", [])
-    fallback_bits = []
-    if legend_missions:
-        legend_html = "".join([
-            f"<div style='display:flex; align-items:center; gap:8px; margin:4px 0;'><span style='font-size:20px; font-weight:900; color:{mission_hex_color(s)};'>★</span><span style='color:#f8f9fa;'>{s}</span></div>"
-            for s in legend_missions
-        ])
-        fallback_bits.append(legend_html)
-        fallback_bits.append("<div style='display:flex; align-items:center; gap:8px; margin-top:8px; color:#f8f9fa;'><span style='display:inline-block; width:14px; height:14px; border:3px solid #FFD43B; border-radius:50%;'></span><span>SNO ring</span></div>")
-    if "runtime_s" in st.session_state:
-        fallback_bits.append(f"<div style='margin-top:10px; font-size:24px; font-weight:900; color:#ff4d4f;'>Compute time: {format_runtime(float(st.session_state['runtime_s']))}</div>")
-    if fallback_bits:
-        st.markdown(f"<div style='background:#0b1320; color:#f8f9fa; padding:12px 14px; border-radius:12px; border:1px solid #334155; margin:8px 0 12px 0;'>" + "".join(fallback_bits) + "</div>", unsafe_allow_html=True)
+    st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
     # -------------------- Tabs AFTER map --------------------
-    tab_about, tab_over, tab_metrics = st.tabs(
-        ["About", "Overpasses & Weather", "Metrics"]
+    tab_about, tab_over, tab_metrics, tab_ls, tab_s2 = st.tabs(
+        ["About", "Overpasses & Weather", "Metrics", "Landsat Time Series", "Sentinel-2 Time Series"]
     )
 
     with tab_about:
@@ -1930,8 +1818,10 @@ def main():
             st.info("Skyfield not installed. To enable: `pip install skyfield sgp4`")
 
     with tab_over:
-        st.subheader("Compute results")
-        submitted = st.button("Compute", type="primary", key="compute_button_main")
+        st.subheader("Compute results (click Compute below)")
+
+        with st.form("compute_form"):
+            submitted = st.form_submit_button("Compute", type="primary")
 
         if submitted:
             t_start = time.perf_counter()
@@ -2001,7 +1891,11 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        diag = future_prediction_diagnostics(tuple(selected_future))
+                        if diag:
+                            st.error("Future prediction diagnostics:\n- " + "\n- ".join(diag))
+                        else:
+                            st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -2020,9 +1914,6 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
-            st.session_state["last_compute_params"] = current_compute_params
-            st.session_state["results_dirty"] = False
-            st.session_state["dirty_reason"] = None
             st.rerun()
 
         # Tables
@@ -2141,10 +2032,41 @@ def main():
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
+    with tab_ls:
+        st.subheader("Landsat time series (requires reflectance sampling)")
+        df_events_w = st.session_state.get("past_df", pd.DataFrame())
+        if df_events_w is None or df_events_w.empty:
+            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
+        else:
+            ls_keys = ["LANDSAT 4 TM", "LANDSAT 5 TM", "LANDSAT 7", "LANDSAT 8", "LANDSAT 9"]
+            if "sat_name" not in df_events_w.columns:
+                st.info("No Landsat data from last run.")
+            else:
+                df_ls = df_events_w[df_events_w["sat_name"].isin(ls_keys)].copy()
+                if df_ls.empty:
+                    st.info("No Landsat TM/ETM+/OLI acquisitions in the last run.")
+                else:
+                    plot_timeseries(df_ls, ["refl_B2", "refl_B3", "refl_B4", "refl_B5"],
+                                    "Landsat reflectance (B2/B3/B4/B5)")
+
+    with tab_s2:
+        st.subheader("Sentinel-2 time series (requires reflectance sampling)")
+        df_events_w = st.session_state.get("past_df", pd.DataFrame())
+        if df_events_w is None or df_events_w.empty:
+            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
+        else:
+            if "sat_name" not in df_events_w.columns:
+                st.info("No Sentinel-2 data from last run.")
+            else:
+                df_s2 = df_events_w[df_events_w["sat_name"].isin(["SENTINEL-2A", "SENTINEL-2B"])].copy()
+                if df_s2.empty:
+                    st.info("No Sentinel-2A/B acquisitions in the last run.")
+                else:
+                    plot_timeseries(df_s2, ["refl_B2", "refl_B3", "refl_B4", "refl_B8"],
+                                    "Sentinel-2 reflectance (B2/B3/B4/B8)")
 
 
 if __name__ == "__main__":
     main()
-
 
 
