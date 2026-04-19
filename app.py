@@ -408,21 +408,33 @@ if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
 if "gee_project_id_input" not in st.session_state:
     st.session_state["gee_project_id_input"] = st.session_state["submitted_project_id"]
+if "ee_ready_project" not in st.session_state:
+    st.session_state["ee_ready_project"] = ""
+if "ee_status_msg" not in st.session_state:
+    st.session_state["ee_status_msg"] = ""
 
 st.sidebar.text_input(
     "Enter your GEE Project ID",
-    value=st.session_state.get("gee_project_id_input", st.session_state["submitted_project_id"]),
     help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
     key="gee_project_id_input",
 )
-submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn")
+submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn", type="primary")
 
 if submit_project:
     cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
     if cleaned_project_id:
-        st.session_state["submitted_project_id"] = cleaned_project_id
-        st.session_state["project_submitted"] = True
-        st.rerun()
+        try:
+            ee_status = init_ee(cleaned_project_id)
+            st.session_state["submitted_project_id"] = cleaned_project_id
+            st.session_state["project_submitted"] = True
+            st.session_state["ee_ready_project"] = cleaned_project_id
+            st.session_state["ee_status_msg"] = f"GEE initialized successfully ✅ ({cleaned_project_id})"
+        except Exception as e:
+            st.session_state["project_submitted"] = False
+            st.session_state["ee_ready_project"] = ""
+            st.sidebar.error("GEE initialization failed ❌")
+            st.sidebar.write(str(e))
+            st.stop()
     else:
         st.session_state["project_submitted"] = False
         st.sidebar.warning("Please enter a valid GEE Project ID.")
@@ -437,19 +449,15 @@ if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
+st.sidebar.success(st.session_state.get("ee_status_msg", f"GEE initialized successfully ✅ ({project_id})"))
+
 if st.sidebar.button("Change Project ID", key="change_project_id_btn"):
     st.session_state["project_submitted"] = False
     st.session_state["submitted_project_id"] = ""
     st.session_state["gee_project_id_input"] = ""
+    st.session_state["ee_ready_project"] = ""
+    st.session_state["ee_status_msg"] = ""
     st.rerun()
-
-try:
-    ee_status = init_ee(project_id)
-    st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
-except Exception as e:
-    st.sidebar.error("GEE initialization failed ❌")
-    st.sidebar.write(str(e))
-    st.stop()
 
 RESULT_STATE_KEYS = [
     "past_df_raw", "past_df", "past_sno", "past_selected",
@@ -1423,13 +1431,7 @@ def main():
     if "map_view_zoom" not in st.session_state:
         st.session_state["map_view_zoom"] = 7
 
-    # GEE init
-    try:
-        mode_gee = init_ee(st.session_state["submitted_project_id"])
-        st.caption(f"Earth Engine initialized using: {mode_gee}")
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
+    st.caption(f"Earth Engine project: {st.session_state['submitted_project_id']}")
 
     # Sidebar
     st.sidebar.header("Site & Period")
@@ -1726,23 +1728,8 @@ def main():
         edit_options={"edit": True, "remove": True},
     ).add_to(m)
 
-    # ----- runtime overlay on map (optional, shown when available) -----
-    if "runtime_s" in st.session_state:
-        rt_txt = format_runtime(float(st.session_state["runtime_s"]))
-        runtime_html = f"""
-        <div style="position: fixed; top: 12px; right: 14px; z-index: 9999;
-             background: rgba(11, 19, 32, 0.92);
-             padding: 10px 12px; border-radius: 12px;
-             border: 1px solid #22304a;">
-          <span style="font-size: 18px; font-weight: 900; color: #ff3333;">
-            Runtime: {rt_txt}
-          </span>
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(runtime_html))
-
     # ---- Overlay Past Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
         df_raw = st.session_state.get("past_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("past_sno", pd.DataFrame())
         selected = st.session_state.get("past_selected", [])
@@ -1811,7 +1798,7 @@ def main():
 
 
     # ---- Overlay Future Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
@@ -1861,6 +1848,14 @@ def main():
                     except Exception:
                         continue
 
+    legend_missions = []
+    if st.session_state.get("mode") == "Past acquisitions":
+        legend_missions = st.session_state.get("past_selected", [])
+    else:
+        legend_missions = st.session_state.get("future_selected", [])
+    add_map_legend_overlay(m, legend_missions)
+    if "runtime_s" in st.session_state:
+        add_map_runtime_overlay(m, float(st.session_state["runtime_s"]))
 
     folium.LayerControl().add_to(m)
      
@@ -1882,15 +1877,16 @@ def main():
 
 
     def request_map_update(new_lat: float, new_lon: float):
-    	this_click = (round(new_lat, 6), round(new_lon, 6))
-    	if st.session_state.get("_last_click") != this_click:
-           st.session_state["_last_click"] = this_click
-           st.session_state["map_lat"] = float(new_lat)
-           st.session_state["map_lon"] = float(new_lon)
-           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
-           st.session_state["results_dirty"] = True
-           st.session_state["dirty_reason"] = "location"
-           #st.rerun() 
+        this_click = (round(new_lat, 6), round(new_lon, 6))
+        if st.session_state.get("_last_click") != this_click:
+            st.session_state["_last_click"] = this_click
+            st.session_state["map_lat"] = float(new_lat)
+            st.session_state["map_lon"] = float(new_lon)
+            st.session_state["lat"] = float(new_lat)
+            st.session_state["lon"] = float(new_lon)
+            st.session_state["lat_input"] = float(new_lat)
+            st.session_state["lon_input"] = float(new_lon)
+            st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
 
 
      # Only background click will update site
@@ -1913,7 +1909,17 @@ def main():
             if coords and len(coords) == 2:
                 request_map_update(float(coords[1]), float(coords[0]))
 
-    st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
+    st.markdown(f"**Selected location:** {st.session_state['lat']:.6f}, {st.session_state['lon']:.6f}")
+    legend_missions = st.session_state.get("past_selected", []) if st.session_state.get("mode") == "Past acquisitions" else st.session_state.get("future_selected", [])
+    if legend_missions:
+        legend_html = "".join([
+            f"<div style='display:flex; align-items:center; gap:8px; margin:4px 0;'><span style='font-size:20px; font-weight:900; color:{mission_hex_color(s)};'>★</span><span>{s}</span></div>"
+            for s in legend_missions
+        ])
+        rt_html = ""
+        if "runtime_s" in st.session_state:
+            rt_html = f"<div style='margin-top:10px; font-size:22px; font-weight:900; color:#ff4d4f;'>Last compute time: {format_runtime(float(st.session_state['runtime_s']))}</div>"
+        st.markdown(f"<div style='background:#0b1320; color:#f8f9fa; padding:12px 14px; border-radius:12px; border:1px solid #334155; margin:8px 0 12px 0;'><div style='font-size:16px; font-weight:900; margin-bottom:6px;'>Legend</div>{legend_html}<div style='display:flex; align-items:center; gap:8px; margin-top:8px;'><span style='display:inline-block; width:14px; height:14px; border:3px solid #FFD43B; border-radius:50%;'></span><span>SNO ring</span></div>{rt_html}</div>", unsafe_allow_html=True)
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1927,11 +1933,7 @@ def main():
 
     with tab_over:
         st.subheader("Compute results")
-        if st.session_state.get("results_dirty"):
-            st.info("")
-
-        with st.form("compute_form"):
-            submitted = st.form_submit_button("Compute", type="primary")
+        submitted = st.button("Compute", type="primary", key="compute_button_main")
 
         if submitted:
             t_start = time.perf_counter()
