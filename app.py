@@ -409,24 +409,25 @@ if "submitted_project_id" not in st.session_state:
 if "gee_project_id_input" not in st.session_state:
     st.session_state["gee_project_id_input"] = st.session_state["submitted_project_id"]
 
-st.sidebar.text_input(
-    "Enter your GEE Project ID",
-    value=st.session_state.get("gee_project_id_input", st.session_state["submitted_project_id"]),
-    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-    key="gee_project_id_input",
-)
-submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn")
-
-if submit_project:
+def submit_project_id() -> None:
     cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
     if cleaned_project_id:
         st.session_state["submitted_project_id"] = cleaned_project_id
+        st.session_state["gee_project_id_input"] = cleaned_project_id
         st.session_state["project_submitted"] = True
-        st.rerun()
     else:
         st.session_state["project_submitted"] = False
-        st.sidebar.warning("Please enter a valid GEE Project ID.")
-        st.stop()
+
+st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+    key="gee_project_id_input",
+)
+submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn", on_click=submit_project_id)
+
+if submit_project and not st.session_state.get("project_submitted"):
+    st.sidebar.warning("Please enter a valid GEE Project ID.")
+    st.stop()
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -1689,7 +1690,7 @@ def main():
         m.get_root().html.add_child(folium.Element(runtime_html))
 
     # ---- Overlay Past Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
         df_raw = st.session_state.get("past_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("past_sno", pd.DataFrame())
         selected = st.session_state.get("past_selected", [])
@@ -1776,7 +1777,7 @@ def main():
             m.get_root().html.add_child(folium.Element(legend_html))
 
     # ---- Overlay Future Results ----
-    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
+    if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
@@ -1864,15 +1865,12 @@ def main():
 
 
     def request_map_update(new_lat: float, new_lon: float):
-    	this_click = (round(new_lat, 6), round(new_lon, 6))
-    	if st.session_state.get("_last_click") != this_click:
-           st.session_state["_last_click"] = this_click
-           st.session_state["map_lat"] = float(new_lat)
-           st.session_state["map_lon"] = float(new_lon)
-           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
-           st.session_state["results_dirty"] = True
-           st.session_state["dirty_reason"] = "location"
-           #st.rerun() 
+        this_click = (round(new_lat, 6), round(new_lon, 6))
+        if st.session_state.get("_last_click") != this_click:
+            st.session_state["_last_click"] = this_click
+            st.session_state["map_lat"] = float(new_lat)
+            st.session_state["map_lon"] = float(new_lon)
+            st.session_state["site_selection_changed"] = True
 
 
      # Only background click will update site
@@ -1897,6 +1895,24 @@ def main():
 
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
+    legend_selected = []
+    if st.session_state.get("mode") == "Past acquisitions":
+        legend_selected = st.session_state.get("past_selected", [])
+    else:
+        legend_selected = st.session_state.get("future_selected", [])
+
+    info_cols = st.columns([3, 2])
+    with info_cols[0]:
+        if "runtime_s" in st.session_state:
+            st.caption(f"Last compute time: {format_runtime(float(st.session_state['runtime_s']))}")
+    with info_cols[1]:
+        if legend_selected:
+            legend_lines = ["**Legend**"]
+            legend_lines += [f"★ {name}" for name in legend_selected]
+            legend_lines += ["◯ SNO ring"]
+            st.markdown("  \
+".join(legend_lines))
+
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
         ["About", "Overpasses & Weather", "Metrics"]
@@ -1909,11 +1925,10 @@ def main():
 
     with tab_over:
         st.subheader("Compute results")
-        if st.session_state.get("results_dirty"):
-            st.info("Parameters changed. Click Compute to run with the current settings.")
+        if st.session_state.get("site_selection_changed"):
+            st.caption("Selected location changed. Click Compute to update results for the new site.")
 
-        with st.form("compute_form"):
-            submitted = st.form_submit_button("Compute", type="primary")
+        submitted = st.button("Compute", type="primary", key="compute_btn")
 
         if submitted:
             t_start = time.perf_counter()
@@ -2002,6 +2017,8 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
+            st.session_state["site_selection_changed"] = False
+            st.session_state["results_dirty"] = False
             st.session_state["last_compute_params"] = current_compute_params
             st.session_state["results_dirty"] = False
             st.session_state["dirty_reason"] = None
