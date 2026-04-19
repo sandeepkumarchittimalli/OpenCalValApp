@@ -413,21 +413,18 @@ if "project_submitted" not in st.session_state:
     st.session_state["project_submitted"] = False
 if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
-if "gee_project_id_input" not in st.session_state:
-    st.session_state["gee_project_id_input"] = st.session_state["submitted_project_id"]
 
 with st.sidebar.form("gee_project_form"):
-    st.text_input(
+    project_id_input = st.text_input(
         "Enter your GEE Project ID",
+        value=st.session_state.get("submitted_project_id", ""),
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-        key="gee_project_id_input",
     )
     submit_project = st.form_submit_button("Submit Project ID")
 
 if submit_project:
-    cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
+    cleaned_project_id = project_id_input.strip()
     st.session_state["submitted_project_id"] = cleaned_project_id
-    st.session_state["gee_project_id_input"] = cleaned_project_id
     st.session_state["project_submitted"] = bool(cleaned_project_id)
     st.rerun()
 
@@ -443,7 +440,6 @@ if not project_id:
 if st.sidebar.button("Change Project ID"):
     st.session_state["project_submitted"] = False
     st.session_state["submitted_project_id"] = ""
-    st.session_state["gee_project_id_input"] = ""
     st.rerun()
 
 try:
