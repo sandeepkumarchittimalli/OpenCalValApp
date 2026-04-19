@@ -1,7 +1,16 @@
 #############################################
 # app.py 
 #
-# 
+# Features:
+# - Map at TOP (before tabs)
+# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
+# - Only rerun on true "background click" to set site (not cluster/marker clicks)
+# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
+# - MarkerCluster so all stars are visible (no overlap hiding)
+# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
+# - Runtime shown only total, big + colored (and can be placed on map)
+# - Metrics tab: acquisition/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
+# - Time series tabs: only when reflectance sampling enabled
 #############################################
 
 from __future__ import annotations
@@ -19,6 +28,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 import ee
+from itsdangerous import URLSafeSerializer, BadSignature
+from google.oauth2.credentials import Credentials
 from pyorbital.orbital import Orbital
 
 # Skyfield optional (future)
@@ -348,23 +359,73 @@ PAST_MISSIONS: Dict[str, PastMission] = {
 }
 
 
-# ------------------- GEE INIT -------------------
+# ------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
+
+OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
+SIGNING_SECRET = st.secrets["google_oauth"]["signing_secret"]
+serializer = URLSafeSerializer(SIGNING_SECRET, salt="oauth-return")
+
+def finish_oauth_if_needed():
+    qp = st.query_params
+    signed = qp.get("oauth_return")
+    if not signed:
+        return
+
+    try:
+        payload = serializer.loads(signed)
+    except BadSignature:
+        st.error("OAuth return invalid.")
+        st.stop()
+
+    st.session_state["google_tokens"] = payload
+    st.query_params.clear()
+    st.rerun()
+
+def get_user_google_credentials() -> Optional[Credentials]:
+    data = st.session_state.get("google_tokens")
+    if not data:
+        return None
+
+    return Credentials(
+        token=data["token"],
+        refresh_token=data.get("refresh_token"),
+        token_uri=data["token_uri"],
+        client_id=data["client_id"],
+        client_secret=data["client_secret"],
+        scopes=data["scopes"],
+    )
+
+def init_ee(project_id: str) -> str:
+    creds = get_user_google_credentials()
+    if creds is None:
+        raise RuntimeError("User is not connected to Google Earth Engine.")
+    ee.Initialize(credentials=creds, project=project_id)
+    return f"user_oauth(project={project_id})"
+
+finish_oauth_if_needed()
+
+st.sidebar.header("Google Earth Engine Login")
+st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
 st.sidebar.info(
-    "Please enter your Google Earth Engine Project ID and click Submit."
+    "Sign in with your Google account, then enter your own Earth Engine project ID. "
+    "Please review Privacy & Usage before using this app."
 )
-st.sidebar.header("GEE Project ID")
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
 
-# ---------- Persist form state ----------
+if "google_tokens" not in st.session_state:
+    st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
+    st.sidebar.warning("Connect your Google account first.")
+    st.stop()
+
+st.sidebar.success("Google account connected ✅")
+
 if "gee_submitted" not in st.session_state:
     st.session_state["gee_submitted"] = False
-
 if "latest_projectid" not in st.session_state:
     st.session_state["latest_projectid"] = ""
 
-# ---------- Project ID form ----------
 with st.sidebar.form("gee_form"):
     gee_project_id = st.text_input(
         "Enter your GEE Project ID",
@@ -372,39 +433,26 @@ with st.sidebar.form("gee_form"):
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
         key="gee_project_id_input",
     )
-    submitted = st.form_submit_button("Submit")
+    submitted = st.form_submit_button("Submit Project ID")
 
 if submitted:
     st.session_state["latest_projectid"] = gee_project_id.strip()
     st.session_state["gee_submitted"] = True
+    st.rerun()
 
-# ---------- Stop app until user submits ----------
 if not st.session_state["gee_submitted"]:
+    st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
     st.stop()
 
-latest_projectid = st.session_state["latest_projectid"]
-
+latest_projectid = st.session_state["latest_projectid"].strip()
 if not latest_projectid:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
-# ---------- Optional: allow changing project ----------
 if st.sidebar.button("Change Project ID"):
     st.session_state["gee_submitted"] = False
     st.session_state["latest_projectid"] = ""
-    st.cache_resource.clear()
     st.rerun()
-
-# ---------- EE init ----------
-@st.cache_resource(show_spinner=False)
-def init_ee(project_id: str) -> str:
-    try:
-        ee.Initialize(project=project_id)
-        return f"user_account(project={project_id})"
-    except Exception as e:
-        raise RuntimeError(
-            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
-        )
 
 try:
     ee_status = init_ee(latest_projectid)
@@ -414,28 +462,6 @@ except Exception as e:
     st.sidebar.write(str(e))
     st.stop()
 
-
-
-@st.cache_resource(show_spinner=False)
-def init_ee(project_id: str) -> str:
-    try:
-        ee.Initialize(project=project_id)
-        return f"user_account(project={project_id})"
-    except Exception as e:
-        raise RuntimeError(
-            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
-        )
-
-
-
-# Initialize EE
-try:
-    st.sidebar.write(f"Using project ID: `{latest_projectid}`")  # debug (optional)
-    ee_status = init_ee(latest_projectid)
-except Exception as e:
-    st.sidebar.error("GEE initialization failed ❌")
-    st.sidebar.write(str(e))
-    st.stop()
 # ------------------- UTILS -------------------
 
 def great_circle_distance_km(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
@@ -519,10 +545,10 @@ def add_star(layer, lat, lon, color_hex="#00FFFF", tooltip="", popup_html=""):
     """
     html = f"""
     <div style="
-        font-size: 26px;
+        font-size: 22px;
         font-weight: 900;
         color: {color_hex};
-        line-height: 26px;
+        line-height: 22px;
         -webkit-text-stroke: 2px rgba(0,0,0,0.95);
         text-shadow:
             0 0 2px rgba(255,255,255,0.95),
@@ -535,7 +561,7 @@ def add_star(layer, lat, lon, color_hex="#00FFFF", tooltip="", popup_html=""):
         location=[lat, lon],
         tooltip=tooltip,
         popup=folium.Popup(popup_html, max_width=450) if popup_html else None,
-        icon=DivIcon(icon_size=(26, 26), icon_anchor=(13, 13), html=html),
+        icon=DivIcon(icon_size=(22, 22), icon_anchor=(11, 11), html=html),
     ).add_to(layer)
 
 
@@ -696,9 +722,10 @@ def gee_past_acquisitions(
     selected_missions: Tuple[str, ...],
     site_buffer_m: float,
     sample_reflectance: bool,
+    project_id: str,
     max_results_per_collection: int = 5000,  # avoid EE abort
 ) -> pd.DataFrame:
-    init_ee(gee_project_id)
+    init_ee(project_id)
 
     pt = _ee_point(lon, lat)
     site = _ee_buffer(lon, lat, float(site_buffer_m))
@@ -1315,12 +1342,10 @@ def main():
         st.session_state["map_view_center"] = [float(st.session_state["lat"]), float(st.session_state["lon"])]
     if "map_view_zoom" not in st.session_state:
         st.session_state["map_view_zoom"] = 7
-    if "map_render_version" not in st.session_state:
-        st.session_state["map_render_version"] = 0
 
     # GEE init
     try:
-        mode_gee = init_ee(gee_project_id)
+        mode_gee = init_ee(latest_projectid)
         st.caption(f"Earth Engine initialized using: {mode_gee}")
     except Exception as e:
         st.error(str(e))
@@ -1689,15 +1714,7 @@ def main():
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
 
-        star_cluster = MarkerCluster(
-            name="Passes ★",
-            options={
-                "spiderfyOnMaxZoom": True,
-                "showCoverageOnHover": False,
-                "zoomToBoundsOnClick": True,
-                "disableClusteringAtZoom": 12,
-            },
-        ).add_to(m)
+        star_cluster = MarkerCluster(name="Passes ★").add_to(m)
 
         if df_raw is not None and not df_raw.empty:
             df_plot = df_raw.copy()
@@ -1766,7 +1783,7 @@ def main():
     m,
     height=450,
     width="stretch",
-    key=f"site_map_{st.session_state['map_render_version']}",
+    key="site_map",
     returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
 )
 
@@ -1844,6 +1861,7 @@ def main():
                             selected_missions=tuple(selected_past),
                             site_buffer_m=float(site_buffer_m),
                             sample_reflectance=bool(sample_reflectance),
+                            project_id=latest_projectid,
                         )
 
                     if df_events.empty:
@@ -1914,7 +1932,6 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
-            st.session_state["map_render_version"] += 1
             st.rerun()
 
         # Tables
@@ -1930,7 +1947,8 @@ def main():
                     "cloud_cover_pct", "precip_mm", "quality_label",
                     "scene_center_dist_km", "scene_center_lat", "scene_center_lon",
                 ]
-                cols = base_cols
+                refl_cols = [c for c in df_events_w.columns if c.startswith("refl_")]
+                cols = base_cols + refl_cols
                 for c in cols:
                     if c not in df_events_w.columns:
                         df_events_w[c] = np.nan
@@ -2032,7 +2050,8 @@ def main():
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
+
+
 if __name__ == "__main__":
     main()
-
 
