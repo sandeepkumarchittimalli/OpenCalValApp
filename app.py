@@ -407,19 +407,22 @@ if "project_submitted" not in st.session_state:
 if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
 
-with st.sidebar.form("gee_project_form"):
-    project_id_input = st.text_input(
-        "Enter your GEE Project ID",
-        value=st.session_state["submitted_project_id"],
-        help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-        key="gee_project_id",
-    )
-    submit_project = st.form_submit_button("Submit Project ID")
+project_id_input = st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    value=st.session_state["submitted_project_id"],
+    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+    key="gee_project_id",
+)
+submit_project = st.sidebar.button("Submit Project ID", type="primary", use_container_width=True)
 
 if submit_project:
-    st.session_state["submitted_project_id"] = project_id_input.strip()
-    st.session_state["project_submitted"] = True
-    st.rerun()
+    cleaned_project_id = project_id_input.strip()
+    if cleaned_project_id:
+        st.session_state["submitted_project_id"] = cleaned_project_id
+        st.session_state["gee_project_id"] = cleaned_project_id
+        st.session_state["project_submitted"] = True
+    else:
+        st.session_state["project_submitted"] = False
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -433,6 +436,7 @@ if not project_id:
 if st.sidebar.button("Change Project ID"):
     st.session_state["project_submitted"] = False
     st.session_state["submitted_project_id"] = ""
+    st.session_state["gee_project_id"] = ""
     st.rerun()
 
 try:
@@ -1626,8 +1630,19 @@ def main():
         "min_elev_deg": float(min_elev_deg),
         "future_engine": future_engine,
     }
-    if st.session_state.get("last_compute_params") != current_compute_params:
+    last_compute_params = st.session_state.get("last_compute_params")
+    if last_compute_params != current_compute_params:
         st.session_state["results_dirty"] = True
+
+    current_nonlocation_params = {k: v for k, v in current_compute_params.items() if k not in {"lat", "lon"}}
+    last_nonlocation_params = None
+    if last_compute_params is not None:
+        last_nonlocation_params = {k: v for k, v in last_compute_params.items() if k not in {"lat", "lon"}}
+    location_dirty = bool(last_compute_params is not None and (
+        last_compute_params.get("lat") != current_compute_params.get("lat") or
+        last_compute_params.get("lon") != current_compute_params.get("lon")
+    ))
+    nonlocation_dirty = bool(last_nonlocation_params is not None and last_nonlocation_params != current_nonlocation_params)
 
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
@@ -1870,31 +1885,41 @@ def main():
         m.get_root().html.add_child(folium.Element(legend_html))
 
     map_data = st_folium(
-    m,
-    height=450,
-    width="stretch",
-    key="site_map",
-    returned_objects=["last_clicked", "last_object_clicked", "last_active_drawing", "all_drawings"],
-)
+        m,
+        height=450,
+        width="stretch",
+        key="site_map",
+        returned_objects=["last_clicked", "last_object_clicked", "last_active_drawing", "all_drawings", "center", "zoom"],
+    )
 
+    if map_data:
+        map_center = map_data.get("center")
+        map_zoom = map_data.get("zoom")
+        if isinstance(map_center, dict) and {"lat", "lng"}.issubset(map_center.keys()):
+            st.session_state["map_view_center"] = [float(map_center["lat"]), float(map_center["lng"])]
+        if map_zoom is not None:
+            try:
+                st.session_state["map_view_zoom"] = int(map_zoom)
+            except Exception:
+                pass
 
     def request_map_update(new_lat: float, new_lon: float):
-    	this_click = (round(new_lat, 6), round(new_lon, 6))
-    	if st.session_state.get("_last_click") != this_click:
-           st.session_state["_last_click"] = this_click
-           st.session_state["map_lat"] = float(new_lat)
-           st.session_state["map_lon"] = float(new_lon)
-           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
-           mark_results_dirty()
-           #st.rerun() 
+        this_click = (round(new_lat, 6), round(new_lon, 6))
+        current_site = (round(float(st.session_state.get("lat", DEFAULT_LAT)), 6), round(float(st.session_state.get("lon", DEFAULT_LON)), 6))
+        if current_site == this_click:
+            return
+        if st.session_state.get("_last_click") != this_click:
+            st.session_state["_last_click"] = this_click
+            st.session_state["map_lat"] = float(new_lat)
+            st.session_state["map_lon"] = float(new_lon)
+            mark_results_dirty()
 
-
-     # Only background click will update site
+    # Only background click will update site
     if map_data and map_data.get("last_clicked") and not map_data.get("last_object_clicked"):
         request_map_update(
-        float(map_data["last_clicked"]["lat"]),
-        float(map_data["last_clicked"]["lng"]),
-    )
+            float(map_data["last_clicked"]["lat"]),
+            float(map_data["last_clicked"]["lng"]),
+        )
    
     # Draw/edit marker-to-set
     candidate = None
@@ -1909,10 +1934,38 @@ def main():
             if coords and len(coords) == 2:
                 request_map_update(float(coords[1]), float(coords[0]))
 
-    st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
+    legend_selected = []
+    if st.session_state.get("mode") == "Past acquisitions":
+        legend_selected = st.session_state.get("past_selected", [])
+    elif st.session_state.get("mode") == "Future pass planning":
+        legend_selected = st.session_state.get("future_selected", [])
 
-    if st.session_state.get("results_dirty") and has_any_results():
-        st.info("Parameters changed. Showing last computed results on the map and below. Click Compute to update them for the current settings.")
+    if legend_selected or "runtime_s" in st.session_state:
+        legend_lines = "".join([
+            f"<div style='margin-bottom:4px;'><span style='color:{mission_hex_color(s)}; font-weight:900;'>★</span> {s}</div>"
+            for s in legend_selected
+        ])
+        runtime_line = ""
+        if "runtime_s" in st.session_state:
+            runtime_line = f"<div style='margin-top:8px;'><b>Compute time:</b> {format_runtime(float(st.session_state['runtime_s']))}</div>"
+        sno_line = "<div style='margin-top:8px;'><span style='display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;'></span>SNO rings</div>" if legend_selected else ""
+        st.markdown(
+            f"""
+            <div style="margin-top: 8px; margin-bottom: 8px; background: rgba(11,19,32,0.92); color: #f8f9fa; padding: 10px 12px; border: 1px solid #22304a; border-radius: 8px; font-size: 12px; max-width: 340px;">
+              <div style="font-weight: 700; margin-bottom: 6px;">Map legend</div>
+              {legend_lines}
+              {sno_line}
+              {runtime_line}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
+    if location_dirty and has_any_results():
+        st.caption("Selected location changed. Showing the last computed results until you click Compute again.")
+    elif nonlocation_dirty and has_any_results():
+        st.info("Parameters changed. Showing the last computed results until you click Compute again.")
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1926,8 +1979,10 @@ def main():
 
     with tab_over:
         st.subheader("Compute results")
-        if st.session_state.get("results_dirty") and has_any_results():
+        if nonlocation_dirty and has_any_results():
             st.info("Parameters changed. Below you are still seeing the last computed results until you click Compute.")
+        elif location_dirty and has_any_results():
+            st.caption("Location changed after the last run. Click Compute to refresh the results for the new site.")
         elif st.session_state.get("results_dirty"):
             st.info("Parameters changed. Click Compute to run with the current settings.")
 
