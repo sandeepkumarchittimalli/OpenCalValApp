@@ -346,7 +346,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
     ),
 }
 
- ------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
+------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
 
 OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
 SIGNING_SECRET = st.secrets["google_oauth"]["signing_secret"]
