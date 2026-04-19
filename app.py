@@ -9,7 +9,7 @@
 # - MarkerCluster so all stars are visible (no overlap hiding)
 # - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
 # - Runtime shown only total, big + colored (and can be placed on map)
-# - Metrics tab: acquisition/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
+# - Metrics tab: acquisitfion/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
 # - Time series tabs: only when reflectance sampling enabled
 #############################################
 
@@ -28,8 +28,6 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 import ee
-from itsdangerous import URLSafeSerializer, BadSignature
-from google.oauth2.credentials import Credentials
 from pyorbital.orbital import Orbital
 
 # Skyfield optional (future)
@@ -359,110 +357,94 @@ PAST_MISSIONS: Dict[str, PastMission] = {
 }
 
 
-# ------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
-
-OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
-SIGNING_SECRET = st.secrets["google_oauth"]["signing_secret"]
-serializer = URLSafeSerializer(SIGNING_SECRET, salt="oauth-return")
-
-def finish_oauth_if_needed():
-    qp = st.query_params
-    signed = qp.get("oauth_return")
-    if not signed:
-        return
-
-    try:
-        payload = serializer.loads(signed)
-    except BadSignature:
-        st.error("OAuth return invalid.")
-        st.stop()
-
-    st.session_state["google_tokens"] = payload
-    st.query_params.clear()
-    st.rerun()
-
-def get_user_google_credentials() -> Optional[Credentials]:
-    data = st.session_state.get("google_tokens")
-    if not data:
-        return None
-
-    return Credentials(
-        token=data["token"],
-        refresh_token=data.get("refresh_token"),
-        token_uri=data["token_uri"],
-        client_id=data["client_id"],
-        client_secret=data["client_secret"],
-        scopes=data["scopes"],
-    )
-
-def init_ee(project_id: str) -> str:
-    creds = get_user_google_credentials()
-    if creds is None:
-        raise RuntimeError("User is not connected to Google Earth Engine.")
-    ee.Initialize(credentials=creds, project=project_id)
-    return f"user_oauth(project={project_id})"
-
-finish_oauth_if_needed()
-
-st.sidebar.header("Google Earth Engine Login")
-st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
+# ------------------- GEE INIT -------------------
 st.sidebar.info(
-    "Sign in with your Google account, then enter your own Earth Engine project ID. "
-    "Please review Privacy & Usage before using this app."
+    "Please enter your Google Earth Engine Project ID and click Submit."
 )
+st.sidebar.header("GEE Project ID")
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
 
-if "google_tokens" not in st.session_state:
-    st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
-    st.sidebar.warning("Connect your Google account first.")
-    st.stop()
+# ---------- Persist form state ----------
+if "gee_submitted" not in st.session_state:
+    st.session_state["gee_submitted"] = False
 
-st.sidebar.success("Google account connected ✅")
+if "latest_projectid" not in st.session_state:
+    st.session_state["latest_projectid"] = ""
 
-# ------------------- PROJECT ID -------------------
-if "project_submitted" not in st.session_state:
-    st.session_state["project_submitted"] = False
-if "submitted_project_id" not in st.session_state:
-    st.session_state["submitted_project_id"] = ""
-
-with st.sidebar.form("gee_project_form"):
-    project_id_input = st.text_input(
+# ---------- Project ID form ----------
+with st.sidebar.form("gee_form"):
+    gee_project_id = st.text_input(
         "Enter your GEE Project ID",
-        value=st.session_state["submitted_project_id"],
+        value=st.session_state["latest_projectid"],
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
         key="gee_project_id_input",
     )
-    submit_project = st.form_submit_button("Submit Project ID")
+    submitted = st.form_submit_button("Submit")
 
-if submit_project:
-    st.session_state["submitted_project_id"] = project_id_input.strip()
-    st.session_state["project_submitted"] = True
-    st.rerun()
+if submitted:
+    st.session_state["latest_projectid"] = gee_project_id.strip()
+    st.session_state["gee_submitted"] = True
 
-if not st.session_state["project_submitted"]:
-    st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
+# ---------- Stop app until user submits ----------
+if not st.session_state["gee_submitted"]:
     st.stop()
 
-project_id = st.session_state["submitted_project_id"].strip()
-if not project_id:
+latest_projectid = st.session_state["latest_projectid"]
+
+if not latest_projectid:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
+# ---------- Optional: allow changing project ----------
 if st.sidebar.button("Change Project ID"):
-    st.session_state["project_submitted"] = False
-    st.session_state["submitted_project_id"] = ""
+    st.session_state["gee_submitted"] = False
+    st.session_state["latest_projectid"] = ""
+    st.cache_resource.clear()
     st.rerun()
 
+# ---------- EE init ----------
+@st.cache_resource(show_spinner=False)
+def init_ee(project_id: str) -> str:
+    try:
+        ee.Initialize(project=project_id)
+        return f"user_account(project={project_id})"
+    except Exception as e:
+        raise RuntimeError(
+            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
+        )
+
 try:
-    ee_status = init_ee(project_id)
-    st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
+    ee_status = init_ee(latest_projectid)
+    st.sidebar.success(f"GEE initialized successfully ✅ ({latest_projectid})")
 except Exception as e:
     st.sidebar.error("GEE initialization failed ❌")
     st.sidebar.write(str(e))
     st.stop()
 
+
+
+@st.cache_resource(show_spinner=False)
+def init_ee(project_id: str) -> str:
+    try:
+        ee.Initialize(project=project_id)
+        return f"user_account(project={project_id})"
+    except Exception as e:
+        raise RuntimeError(
+            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
+        )
+
+
+
+# Initialize EE
+try:
+    st.sidebar.write(f"Using project ID: `{latest_projectid}`")  # debug (optional)
+    ee_status = init_ee(latest_projectid)
+except Exception as e:
+    st.sidebar.error("GEE initialization failed ❌")
+    st.sidebar.write(str(e))
+    st.stop()
 # ------------------- UTILS -------------------
 
 def great_circle_distance_km(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
@@ -723,10 +705,9 @@ def gee_past_acquisitions(
     selected_missions: Tuple[str, ...],
     site_buffer_m: float,
     sample_reflectance: bool,
-    project_id: str,
     max_results_per_collection: int = 5000,  # avoid EE abort
 ) -> pd.DataFrame:
-    init_ee(project_id)
+    init_ee(gee_project_id)
 
     pt = _ee_point(lon, lat)
     site = _ee_buffer(lon, lat, float(site_buffer_m))
@@ -1329,19 +1310,14 @@ def main():
         st.session_state["date_range"] = (today - timedelta(days=90), today - timedelta(days=1))
     if "site_choice" not in st.session_state:
         st.session_state["site_choice"] = "Crater Lake (OR)"
-    if "map_render_version" not in st.session_state:
-        st.session_state["map_render_version"] = 0
 
     # Apply map updates before widgets
     if "map_lat" in st.session_state and "map_lon" in st.session_state:
         st.session_state["lat"] = float(st.session_state.pop("map_lat"))
         st.session_state["lon"] = float(st.session_state.pop("map_lon"))
 
-    # Only initialize these once so zoom/pan interactions do not get overwritten
-    if "lat_input" not in st.session_state:
-        st.session_state["lat_input"] = float(st.session_state["lat"])
-    if "lon_input" not in st.session_state:
-        st.session_state["lon_input"] = float(st.session_state["lon"])
+    st.session_state["lat_input"] = float(st.session_state["lat"])
+    st.session_state["lon_input"] = float(st.session_state["lon"])
 
     # Persist map view
     if "map_view_center" not in st.session_state:
@@ -1351,7 +1327,7 @@ def main():
 
     # GEE init
     try:
-        mode_gee = init_ee(project_id)
+        mode_gee = init_ee(gee_project_id)
         st.caption(f"Earth Engine initialized using: {mode_gee}")
     except Exception as e:
         st.error(str(e))
@@ -1422,43 +1398,35 @@ def main():
         min_d = date(1972, 1, 1)
         max_d = yesterday
 
-    if "pending_start_date" not in st.session_state or "pending_end_date" not in st.session_state:
-        dr0 = st.session_state["date_range"]
-        st.session_state["pending_start_date"] = dr0[0]
-        st.session_state["pending_end_date"] = dr0[1]
+    date_range = st.sidebar.date_input(
+        "Date range",
+        value=st.session_state["date_range"],
+        min_value=min_d,
+        max_value=max_d,
+        key="date_range_widget",
+    )
+
+    if isinstance(date_range, tuple):
+        start_date, end_date = date_range
+    else:
+        start_date = date_range
+        end_date = date_range
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
 
     if st.session_state["mode"] == "Future pass planning":
-        default_start = max(st.session_state["pending_start_date"], tomorrow)
-        default_end = max(st.session_state["pending_end_date"], default_start)
+        if start_date < tomorrow:
+            start_date = tomorrow
+        if end_date < start_date:
+            end_date = start_date
     else:
-        default_start = st.session_state["pending_start_date"]
-        default_end = min(st.session_state["pending_end_date"], yesterday)
+        if end_date > yesterday:
+            end_date = yesterday
+        if end_date < start_date:
+            start_date = end_date
 
-    st.sidebar.write("### Date range")
-    with st.sidebar.form("date_apply_form"):
-        start_date = st.date_input("Start date", value=default_start, min_value=min_d, max_value=max_d)
-        end_date = st.date_input("End date", value=default_end, min_value=min_d, max_value=max_d)
-        apply_dates = st.form_submit_button("Apply dates")
-
-    if apply_dates:
-        if start_date > end_date:
-            start_date, end_date = end_date, start_date
-        if st.session_state["mode"] == "Future pass planning":
-            if start_date < tomorrow:
-                start_date = tomorrow
-            if end_date < start_date:
-                end_date = start_date
-        else:
-            if end_date > yesterday:
-                end_date = yesterday
-            if end_date < start_date:
-                start_date = end_date
-        st.session_state["pending_start_date"] = start_date
-        st.session_state["pending_end_date"] = end_date
-        st.session_state["date_range"] = (start_date, end_date)
-        st.rerun()
-
-    start_date, end_date = st.session_state["date_range"]
+    st.session_state["date_range"] = (start_date, end_date)
     start_date_str = start_date.isoformat()
     end_date_str = end_date.isoformat()
 
@@ -1536,7 +1504,12 @@ def main():
         key="site_buffer_m"
     )
 
-    sample_reflectance = False
+    sample_reflectance = st.sidebar.checkbox(
+        "Also sample reflectance at site (slower)",
+        value=False,
+        help="Enables time series tabs (when those missions support reflectance sampling).",
+        key="sample_reflectance"
+    )
 
     if st.session_state["mode"] == "Future pass planning":
         overpass_tol_km = st.sidebar.slider(
@@ -1789,7 +1762,7 @@ def main():
     m,
     height=450,
     width="stretch",
-    key=f"site_map_{st.session_state['map_render_version']}",
+    key="site_map",
     returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
 )
 
@@ -1835,8 +1808,8 @@ def main():
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
     # -------------------- Tabs AFTER map --------------------
-    tab_about, tab_over, tab_metrics = st.tabs(
-        ["About", "Overpasses & Weather", "Metrics"]
+    tab_about, tab_over, tab_metrics, tab_ls, tab_s2 = st.tabs(
+        ["About", "Overpasses & Weather", "Metrics", "Landsat Time Series", "Sentinel-2 Time Series"]
     )
 
     with tab_about:
@@ -1867,7 +1840,6 @@ def main():
                             selected_missions=tuple(selected_past),
                             site_buffer_m=float(site_buffer_m),
                             sample_reflectance=bool(sample_reflectance),
-                            project_id=project_id,
                         )
 
                     if df_events.empty:
@@ -1938,7 +1910,6 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
-            st.session_state["map_render_version"] += 1
             st.rerun()
 
         # Tables
@@ -2057,8 +2028,41 @@ def main():
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
+    with tab_ls:
+        st.subheader("Landsat time series (requires reflectance sampling)")
+        df_events_w = st.session_state.get("past_df", pd.DataFrame())
+        if df_events_w is None or df_events_w.empty:
+            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
+        else:
+            ls_keys = ["LANDSAT 4 TM", "LANDSAT 5 TM", "LANDSAT 7", "LANDSAT 8", "LANDSAT 9"]
+            if "sat_name" not in df_events_w.columns:
+                st.info("No Landsat data from last run.")
+            else:
+                df_ls = df_events_w[df_events_w["sat_name"].isin(ls_keys)].copy()
+                if df_ls.empty:
+                    st.info("No Landsat TM/ETM+/OLI acquisitions in the last run.")
+                else:
+                    plot_timeseries(df_ls, ["refl_B2", "refl_B3", "refl_B4", "refl_B5"],
+                                    "Landsat reflectance (B2/B3/B4/B5)")
+
+    with tab_s2:
+        st.subheader("Sentinel-2 time series (requires reflectance sampling)")
+        df_events_w = st.session_state.get("past_df", pd.DataFrame())
+        if df_events_w is None or df_events_w.empty:
+            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
+        else:
+            if "sat_name" not in df_events_w.columns:
+                st.info("No Sentinel-2 data from last run.")
+            else:
+                df_s2 = df_events_w[df_events_w["sat_name"].isin(["SENTINEL-2A", "SENTINEL-2B"])].copy()
+                if df_s2.empty:
+                    st.info("No Sentinel-2A/B acquisitions in the last run.")
+                else:
+                    plot_timeseries(df_s2, ["refl_B2", "refl_B3", "refl_B4", "refl_B8"],
+                                    "Sentinel-2 reflectance (B2/B3/B4/B8)")
 
 
 if __name__ == "__main__":
     main()
+
 
