@@ -1328,14 +1328,19 @@ def main():
         st.session_state["date_range"] = (today - timedelta(days=90), today - timedelta(days=1))
     if "site_choice" not in st.session_state:
         st.session_state["site_choice"] = "Crater Lake (OR)"
+    if "map_render_version" not in st.session_state:
+        st.session_state["map_render_version"] = 0
 
     # Apply map updates before widgets
     if "map_lat" in st.session_state and "map_lon" in st.session_state:
         st.session_state["lat"] = float(st.session_state.pop("map_lat"))
         st.session_state["lon"] = float(st.session_state.pop("map_lon"))
 
-    st.session_state["lat_input"] = float(st.session_state["lat"])
-    st.session_state["lon_input"] = float(st.session_state["lon"])
+    # Only initialize these once so zoom/pan interactions do not get overwritten
+    if "lat_input" not in st.session_state:
+        st.session_state["lat_input"] = float(st.session_state["lat"])
+    if "lon_input" not in st.session_state:
+        st.session_state["lon_input"] = float(st.session_state["lon"])
 
     # Persist map view
     if "map_view_center" not in st.session_state:
@@ -1783,7 +1788,7 @@ def main():
     m,
     height=450,
     width="stretch",
-    key="site_map",
+    key=f"site_map_{st.session_state['map_render_version']}",
     returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
 )
 
@@ -1932,6 +1937,7 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
+            st.session_state["map_render_version"] += 1
             st.rerun()
 
         # Tables
