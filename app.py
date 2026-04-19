@@ -1,18 +1,3 @@
-#############################################
-# app.py 
-#
-# Features:
-# - Map at TOP (before tabs)
-# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
-# - Only rerun on true "background click" to set site (not cluster/marker clicks)
-# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
-# - MarkerCluster so all stars are visible (no overlap hiding)
-# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
-# - Runtime shown only total, big + colored (and can be placed on map)
-# - Metrics tab: acquisitfion/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
-# - Time series tabs: only when reflectance sampling enabled
-#############################################
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,6 +13,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 import ee
+from itsdangerous import URLSafeSerializer, BadSignature
+from google.oauth2.credentials import Credentials
 from pyorbital.orbital import Orbital
 
 # Skyfield optional (future)
@@ -41,6 +28,9 @@ import folium
 from folium.plugins import MousePosition, Draw, MarkerCluster
 from folium.features import DivIcon
 from streamlit_folium import st_folium
+
+
+
 
 st.set_page_config(layout="wide")
 st.title(
@@ -356,95 +346,110 @@ PAST_MISSIONS: Dict[str, PastMission] = {
     ),
 }
 
+ ------------------- GOOGLE OAUTH (CLOUD RUN) + GEE INIT -------------------
 
-# ------------------- GEE INIT -------------------
+OAUTH_BACKEND_START = st.secrets["google_oauth"]["oauth_backend_start"]
+SIGNING_SECRET = st.secrets["google_oauth"]["signing_secret"]
+serializer = URLSafeSerializer(SIGNING_SECRET, salt="oauth-return")
+
+def finish_oauth_if_needed():
+    qp = st.query_params
+    signed = qp.get("oauth_return")
+    if not signed:
+        return
+
+    try:
+        payload = serializer.loads(signed)
+    except BadSignature:
+        st.error("OAuth return invalid.")
+        st.stop()
+
+    st.session_state["google_tokens"] = payload
+    st.query_params.clear()
+    st.rerun()
+
+def get_user_google_credentials() -> Optional[Credentials]:
+    data = st.session_state.get("google_tokens")
+    if not data:
+        return None
+
+    return Credentials(
+        token=data["token"],
+        refresh_token=data.get("refresh_token"),
+        token_uri=data["token_uri"],
+        client_id=data["client_id"],
+        client_secret=data["client_secret"],
+        scopes=data["scopes"],
+    )
+
+def init_ee(project_id: str) -> str:
+    creds = get_user_google_credentials()
+    if creds is None:
+        raise RuntimeError("User is not connected to Google Earth Engine.")
+    ee.Initialize(credentials=creds, project=project_id)
+    return f"user_oauth(project={project_id})"
+
+finish_oauth_if_needed()
+
+st.sidebar.header("Google Earth Engine Login")
+st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
 st.sidebar.info(
-    "Please enter your Google Earth Engine Project ID and click Submit."
+    "Sign in with your Google account, then enter your own Earth Engine project ID. "
+    "Please review Privacy & Usage before using this app."
 )
-st.sidebar.header("GEE Project ID")
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
 
-# ---------- Persist form state ----------
-if "gee_submitted" not in st.session_state:
-    st.session_state["gee_submitted"] = False
+if "google_tokens" not in st.session_state:
+    st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
+    st.sidebar.warning("Connect your Google account first.")
+    st.stop()
 
-if "latest_projectid" not in st.session_state:
-    st.session_state["latest_projectid"] = ""
+st.sidebar.success("Google account connected ✅")
 
-# ---------- Project ID form ----------
-with st.sidebar.form("gee_form"):
-    gee_project_id = st.text_input(
+# ------------------- PROJECT ID -------------------
+if "project_submitted" not in st.session_state:
+    st.session_state["project_submitted"] = False
+if "submitted_project_id" not in st.session_state:
+    st.session_state["submitted_project_id"] = ""
+
+with st.sidebar.form("gee_project_form"):
+    project_id_input = st.text_input(
         "Enter your GEE Project ID",
-        value=st.session_state["latest_projectid"],
+        value=st.session_state["submitted_project_id"],
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
         key="gee_project_id_input",
     )
-    submitted = st.form_submit_button("Submit")
+    submit_project = st.form_submit_button("Submit Project ID")
 
-if submitted:
-    st.session_state["latest_projectid"] = gee_project_id.strip()
-    st.session_state["gee_submitted"] = True
+if submit_project:
+    st.session_state["submitted_project_id"] = project_id_input.strip()
+    st.session_state["project_submitted"] = True
+    st.rerun()
 
-# ---------- Stop app until user submits ----------
-if not st.session_state["gee_submitted"]:
+if not st.session_state["project_submitted"]:
+    st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
     st.stop()
 
-latest_projectid = st.session_state["latest_projectid"]
-
-if not latest_projectid:
+project_id = st.session_state["submitted_project_id"].strip()
+if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
-# ---------- Optional: allow changing project ----------
 if st.sidebar.button("Change Project ID"):
-    st.session_state["gee_submitted"] = False
-    st.session_state["latest_projectid"] = ""
-    st.cache_resource.clear()
+    st.session_state["project_submitted"] = False
+    st.session_state["submitted_project_id"] = ""
     st.rerun()
 
-# ---------- EE init ----------
-@st.cache_resource(show_spinner=False)
-def init_ee(project_id: str) -> str:
-    try:
-        ee.Initialize(project=project_id)
-        return f"user_account(project={project_id})"
-    except Exception as e:
-        raise RuntimeError(
-            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
-        )
-
 try:
-    ee_status = init_ee(latest_projectid)
-    st.sidebar.success(f"GEE initialized successfully ✅ ({latest_projectid})")
+    ee_status = init_ee(project_id)
+    st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
 except Exception as e:
     st.sidebar.error("GEE initialization failed ❌")
     st.sidebar.write(str(e))
     st.stop()
 
-
-
-@st.cache_resource(show_spinner=False)
-def init_ee(project_id: str) -> str:
-    try:
-        ee.Initialize(project=project_id)
-        return f"user_account(project={project_id})"
-    except Exception as e:
-        raise RuntimeError(
-            f"GEE initialization failed. Make sure you ran 'earthengine authenticate'. Original error: {e}"
-        )
-
-
-
-# Initialize EE
-try:
-    st.sidebar.write(f"Using project ID: `{latest_projectid}`")  # debug (optional)
-    ee_status = init_ee(latest_projectid)
-except Exception as e:
-    st.sidebar.error("GEE initialization failed ❌")
-    st.sidebar.write(str(e))
-    st.stop()
 # ------------------- UTILS -------------------
 
 def great_circle_distance_km(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
