@@ -254,8 +254,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_4",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 5 TM": PastMission(
         key="LANDSAT 5 TM", label="Landsat 5 (TM) TOA",
@@ -263,8 +263,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_5",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 7": PastMission(
         key="LANDSAT 7", label="Landsat 7 (ETM+) TOA (decommissioned, past data exists)",
@@ -272,8 +272,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_7",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 8": PastMission(
         key="LANDSAT 8", label="Landsat 8 (OLI) TOA",
@@ -281,8 +281,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_8",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "LANDSAT 9": PastMission(
         key="LANDSAT 9", label="Landsat 9 (OLI-2) TOA",
@@ -290,8 +290,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_9",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
 
     # Sentinel-2 TOA
@@ -301,8 +301,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2A",),
-        sample_scale_m=10, sample_bands=("B2", "B3", "B4", "B8"),
-        sample_band_scales=(S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
     "SENTINEL-2B": PastMission(
         key="SENTINEL-2B", label="Sentinel-2B TOA",
@@ -310,8 +310,8 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2B",),
-        sample_scale_m=10, sample_bands=("B2", "B3", "B4", "B8"),
-        sample_band_scales=(S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE)
+        sample_scale_m=None, sample_bands=None,
+        sample_band_scales=None
     ),
 
     # MODIS
@@ -426,11 +426,10 @@ with st.sidebar.form("gee_project_form"):
 
 if submit_project:
     cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
-    if cleaned_project_id:
-        st.session_state["submitted_project_id"] = cleaned_project_id
-        st.session_state["project_submitted"] = True
-    else:
-        st.session_state["project_submitted"] = False
+    st.session_state["submitted_project_id"] = cleaned_project_id
+    st.session_state["gee_project_id_input"] = cleaned_project_id
+    st.session_state["project_submitted"] = bool(cleaned_project_id)
+    st.rerun()
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -1416,14 +1415,8 @@ def main():
         key="date_range_widget",
     )
 
-    if isinstance(date_range, (tuple, list)):
-        if len(date_range) >= 2:
-            start_date, end_date = date_range[0], date_range[1]
-        elif len(date_range) == 1:
-            start_date = date_range[0]
-            end_date = date_range[0]
-        else:
-            start_date, end_date = st.session_state["date_range"]
+    if isinstance(date_range, tuple):
+        start_date, end_date = date_range
     else:
         start_date = date_range
         end_date = date_range
@@ -1521,9 +1514,9 @@ def main():
     )
 
     sample_reflectance = st.sidebar.checkbox(
-        "Also sample reflectance at site (slower)",
+        "Also sample MODIS/VIIRS reflectance at site (slower)",
         value=False,
-        help="Enables time series tabs (when those missions support reflectance sampling).",
+        help="Landsat and Sentinel-2 TOA reflectance sampling is disabled in the cloud app.",
         key="sample_reflectance"
     )
 
@@ -1783,13 +1776,12 @@ def main():
 )
 
     if map_data:
-        if map_data.get("center"):
-            st.session_state["map_view_center"] = [
-                float(map_data["center"]["lat"]),
-                float(map_data["center"]["lng"]),
-            ]
-        if map_data.get("zoom") is not None:
-            st.session_state["map_view_zoom"] = int(map_data["zoom"])
+       if map_data.get("center"):
+           st.session_state["map_view_center"] = [
+            float(map_data["center"]["lat"]),
+            float(map_data["center"]["lng"]),]
+    if map_data.get("zoom") is not None:
+        st.session_state["map_view_zoom"] = int(map_data["zoom"])
 
 
     def request_map_update(new_lat: float, new_lon: float):
@@ -1825,8 +1817,8 @@ def main():
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
     # -------------------- Tabs AFTER map --------------------
-    tab_about, tab_over, tab_metrics, tab_ls, tab_s2 = st.tabs(
-        ["About", "Overpasses & Weather", "Metrics", "Landsat Time Series", "Sentinel-2 Time Series"]
+    tab_about, tab_over, tab_metrics = st.tabs(
+        ["About", "Overpasses & Weather", "Metrics"]
     )
 
     with tab_about:
@@ -1885,6 +1877,10 @@ def main():
                 if not selected_future:
                     st.warning("Select at least one satellite for future planning.")
                 else:
+                    future_input_errors = check_future_inputs(tuple(selected_future))
+                    st.session_state["future_input_errors"] = future_input_errors
+                    if future_input_errors:
+                        st.warning("Some future-pass inputs failed in deployment:\n- " + "\n- ".join(future_input_errors))
                     with st.spinner("Predicting future passes..."):
                         use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
                         if use_skyfield:
@@ -1908,7 +1904,10 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        if st.session_state.get("future_input_errors"):
+                            st.warning("No future passes found. The deployment also reported TLE/input errors above.")
+                        else:
+                            st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -2044,40 +2043,6 @@ def main():
                 # For future table, the pair columns are sat_a/sat_b already; keep as is:
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
-
-    with tab_ls:
-        st.subheader("Landsat time series (requires reflectance sampling)")
-        df_events_w = st.session_state.get("past_df", pd.DataFrame())
-        if df_events_w is None or df_events_w.empty:
-            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
-        else:
-            ls_keys = ["LANDSAT 4 TM", "LANDSAT 5 TM", "LANDSAT 7", "LANDSAT 8", "LANDSAT 9"]
-            if "sat_name" not in df_events_w.columns:
-                st.info("No Landsat data from last run.")
-            else:
-                df_ls = df_events_w[df_events_w["sat_name"].isin(ls_keys)].copy()
-                if df_ls.empty:
-                    st.info("No Landsat TM/ETM+/OLI acquisitions in the last run.")
-                else:
-                    plot_timeseries(df_ls, ["refl_B2", "refl_B3", "refl_B4", "refl_B5"],
-                                    "Landsat reflectance (B2/B3/B4/B5)")
-
-    with tab_s2:
-        st.subheader("Sentinel-2 time series (requires reflectance sampling)")
-        df_events_w = st.session_state.get("past_df", pd.DataFrame())
-        if df_events_w is None or df_events_w.empty:
-            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
-        else:
-            if "sat_name" not in df_events_w.columns:
-                st.info("No Sentinel-2 data from last run.")
-            else:
-                df_s2 = df_events_w[df_events_w["sat_name"].isin(["SENTINEL-2A", "SENTINEL-2B"])].copy()
-                if df_s2.empty:
-                    st.info("No Sentinel-2A/B acquisitions in the last run.")
-                else:
-                    plot_timeseries(df_s2, ["refl_B2", "refl_B3", "refl_B4", "refl_B8"],
-                                    "Sentinel-2 reflectance (B2/B3/B4/B8)")
-
 
 if __name__ == "__main__":
     main()
