@@ -419,7 +419,7 @@ with st.sidebar.form("gee_project_form"):
         "Enter your GEE Project ID",
         value=st.session_state["submitted_project_id"],
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-        key="gee_project_id_input",
+        key="gee_project_id",
     )
     submit_project = st.form_submit_button("Submit Project ID")
 
