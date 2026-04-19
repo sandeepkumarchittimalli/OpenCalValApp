@@ -406,23 +406,27 @@ if "project_submitted" not in st.session_state:
     st.session_state["project_submitted"] = False
 if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
+if "gee_project_id_input" not in st.session_state:
+    st.session_state["gee_project_id_input"] = st.session_state["submitted_project_id"]
 
-project_id_input = st.sidebar.text_input(
+st.sidebar.text_input(
     "Enter your GEE Project ID",
-    value=st.session_state["submitted_project_id"],
+    value=st.session_state.get("gee_project_id_input", st.session_state["submitted_project_id"]),
     help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-    key="gee_project_id",
+    key="gee_project_id_input",
 )
-submit_project = st.sidebar.button("Submit Project ID", type="primary", use_container_width=True)
+submit_project = st.sidebar.button("Submit Project ID", key="submit_project_id_btn")
 
 if submit_project:
-    cleaned_project_id = project_id_input.strip()
+    cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
     if cleaned_project_id:
         st.session_state["submitted_project_id"] = cleaned_project_id
-        st.session_state["gee_project_id"] = cleaned_project_id
         st.session_state["project_submitted"] = True
+        st.rerun()
     else:
         st.session_state["project_submitted"] = False
+        st.sidebar.warning("Please enter a valid GEE Project ID.")
+        st.stop()
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -433,10 +437,10 @@ if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
-if st.sidebar.button("Change Project ID"):
+if st.sidebar.button("Change Project ID", key="change_project_id_btn"):
     st.session_state["project_submitted"] = False
     st.session_state["submitted_project_id"] = ""
-    st.session_state["gee_project_id"] = ""
+    st.session_state["gee_project_id_input"] = ""
     st.rerun()
 
 try:
@@ -450,7 +454,7 @@ except Exception as e:
 RESULT_STATE_KEYS = [
     "past_df_raw", "past_df", "past_sno", "past_selected",
     "future_df_raw", "future_df", "future_sno", "future_selected",
-    "runtime_s", "last_compute_params", "future_prediction_errors",
+    "runtime_s", "last_compute_params",
 ]
 
 def clear_results_state() -> None:
@@ -460,10 +464,7 @@ def clear_results_state() -> None:
 
 def mark_results_dirty() -> None:
     st.session_state["results_dirty"] = True
-
-
-def has_any_results() -> bool:
-    return any(k in st.session_state for k in ["past_df", "future_df", "past_df_raw", "future_df_raw"])
+    st.session_state["dirty_reason"] = "params"
 
 
 def reset_app_state() -> None:
@@ -1044,15 +1045,13 @@ def predict_future_passes_pyorbital(
 
     obs_alt_m = 0.0
     rows: List[Dict[str, Any]] = []
-    errors: List[str] = []
 
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception as e:
-            errors.append(f"{sat}: unable to load TLE / orbital data ({e})")
+        except Exception:
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1120,8 +1119,6 @@ def predict_future_passes_pyorbital(
                         "engine": "pyorbital",
                     })
 
-    st.session_state["future_prediction_errors"] = errors
-    st.session_state["future_prediction_errors"] = errors
     if not rows:
         return pd.DataFrame()
 
@@ -1152,15 +1149,13 @@ def predict_future_passes_skyfield(
 
     observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
     rows: List[Dict[str, Any]] = []
-    errors: List[str] = []
 
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
         try:
             sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception as e:
-            errors.append(f"{sat}: unable to load TLE / Skyfield satellite ({e})")
+        except Exception:
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1168,8 +1163,7 @@ def predict_future_passes_skyfield(
 
         try:
             t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception as e:
-            errors.append(f"{sat}: pass prediction failed ({e})")
+        except Exception:
             continue
 
         current_triplet = {}
@@ -1365,6 +1359,8 @@ def main():
         st.session_state["site_choice"] = "Crater Lake (OR)"
     if "results_dirty" not in st.session_state:
         st.session_state["results_dirty"] = False
+    if "dirty_reason" not in st.session_state:
+        st.session_state["dirty_reason"] = None
 
     # Apply map updates before widgets
     if "map_lat" in st.session_state and "map_lon" in st.session_state:
@@ -1630,23 +1626,12 @@ def main():
         "min_elev_deg": float(min_elev_deg),
         "future_engine": future_engine,
     }
-    last_compute_params = st.session_state.get("last_compute_params")
-    if last_compute_params != current_compute_params:
+    if st.session_state.get("last_compute_params") != current_compute_params:
         st.session_state["results_dirty"] = True
-
-    current_nonlocation_params = {k: v for k, v in current_compute_params.items() if k not in {"lat", "lon"}}
-    last_nonlocation_params = None
-    if last_compute_params is not None:
-        last_nonlocation_params = {k: v for k, v in last_compute_params.items() if k not in {"lat", "lon"}}
-    location_dirty = bool(last_compute_params is not None and (
-        last_compute_params.get("lat") != current_compute_params.get("lat") or
-        last_compute_params.get("lon") != current_compute_params.get("lon")
-    ))
-    nonlocation_dirty = bool(last_nonlocation_params is not None and last_nonlocation_params != current_nonlocation_params)
 
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
-    st.caption("Click empty map area to set site. Pan/zoom should no longer invalidate results or rewrite map view state.")
+    st.caption("Zoom/pan/cluster click will NOT reset the map. Click empty map area to set site.")
 
     lat = float(st.session_state["lat"])
     lon = float(st.session_state["lon"])
@@ -1704,7 +1689,7 @@ def main():
         m.get_root().html.add_child(folium.Element(runtime_html))
 
     # ---- Overlay Past Results ----
-    if st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
+    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Past acquisitions" and "past_df_raw" in st.session_state:
         df_raw = st.session_state.get("past_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("past_sno", pd.DataFrame())
         selected = st.session_state.get("past_selected", [])
@@ -1791,7 +1776,7 @@ def main():
             m.get_root().html.add_child(folium.Element(legend_html))
 
     # ---- Overlay Future Results ----
-    if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
+    if (not st.session_state.get("results_dirty")) and st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
@@ -1861,65 +1846,41 @@ def main():
 
     folium.LayerControl().add_to(m)
      
-    # ---- In-map legend (bottom-left) ----
-    legend_selected = []
-    if st.session_state.get("mode") == "Past acquisitions":
-        legend_selected = st.session_state.get("past_selected", [])
-    elif st.session_state.get("mode") == "Future pass planning":
-        legend_selected = st.session_state.get("future_selected", [])
-    if legend_selected:
-        lines = "".join([f"<div style='margin-bottom:4px;'><span style='color:{mission_hex_color(s)}; font-weight:900;'>★</span> {s}</div>" for s in legend_selected])
-        legend_html = f"""
-        <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
-          background: rgba(11,19,32,0.92); color: #f8f9fa;
-          padding: 10px; border: 1px solid #22304a; border-radius: 8px;
-          font-size: 12px; max-width: 320px;">
-          <b>Legend</b>
-          <div style="margin-top:6px;">{lines}</div>
-          <div style="margin-top:8px;">
-            <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
-            SNO rings
-          </div>
-        </div>
-        """
-        m.get_root().html.add_child(folium.Element(legend_html))
-
     map_data = st_folium(
-        m,
-        height=450,
-        width="stretch",
-        key="site_map",
-        returned_objects=["last_clicked", "last_object_clicked", "last_active_drawing", "all_drawings", "center", "zoom"],
-    )
+    m,
+    height=450,
+    width="stretch",
+    key="site_map",
+    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
+)
 
     if map_data:
-        map_center = map_data.get("center")
-        map_zoom = map_data.get("zoom")
-        if isinstance(map_center, dict) and {"lat", "lng"}.issubset(map_center.keys()):
-            st.session_state["map_view_center"] = [float(map_center["lat"]), float(map_center["lng"])]
-        if map_zoom is not None:
-            try:
-                st.session_state["map_view_zoom"] = int(map_zoom)
-            except Exception:
-                pass
+       if map_data.get("center"):
+           st.session_state["map_view_center"] = [
+            float(map_data["center"]["lat"]),
+            float(map_data["center"]["lng"]),]
+    if map_data.get("zoom") is not None:
+        st.session_state["map_view_zoom"] = int(map_data["zoom"])
+
 
     def request_map_update(new_lat: float, new_lon: float):
-        this_click = (round(new_lat, 6), round(new_lon, 6))
-        current_site = (round(float(st.session_state.get("lat", DEFAULT_LAT)), 6), round(float(st.session_state.get("lon", DEFAULT_LON)), 6))
-        if current_site == this_click:
-            return
-        if st.session_state.get("_last_click") != this_click:
-            st.session_state["_last_click"] = this_click
-            st.session_state["map_lat"] = float(new_lat)
-            st.session_state["map_lon"] = float(new_lon)
-            mark_results_dirty()
+    	this_click = (round(new_lat, 6), round(new_lon, 6))
+    	if st.session_state.get("_last_click") != this_click:
+           st.session_state["_last_click"] = this_click
+           st.session_state["map_lat"] = float(new_lat)
+           st.session_state["map_lon"] = float(new_lon)
+           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
+           st.session_state["results_dirty"] = True
+           st.session_state["dirty_reason"] = "location"
+           #st.rerun() 
 
-    # Only background click will update site
+
+     # Only background click will update site
     if map_data and map_data.get("last_clicked") and not map_data.get("last_object_clicked"):
         request_map_update(
-            float(map_data["last_clicked"]["lat"]),
-            float(map_data["last_clicked"]["lng"]),
-        )
+        float(map_data["last_clicked"]["lat"]),
+        float(map_data["last_clicked"]["lng"]),
+    )
    
     # Draw/edit marker-to-set
     candidate = None
@@ -1934,38 +1895,7 @@ def main():
             if coords and len(coords) == 2:
                 request_map_update(float(coords[1]), float(coords[0]))
 
-    legend_selected = []
-    if st.session_state.get("mode") == "Past acquisitions":
-        legend_selected = st.session_state.get("past_selected", [])
-    elif st.session_state.get("mode") == "Future pass planning":
-        legend_selected = st.session_state.get("future_selected", [])
-
-    if legend_selected or "runtime_s" in st.session_state:
-        legend_lines = "".join([
-            f"<div style='margin-bottom:4px;'><span style='color:{mission_hex_color(s)}; font-weight:900;'>★</span> {s}</div>"
-            for s in legend_selected
-        ])
-        runtime_line = ""
-        if "runtime_s" in st.session_state:
-            runtime_line = f"<div style='margin-top:8px;'><b>Compute time:</b> {format_runtime(float(st.session_state['runtime_s']))}</div>"
-        sno_line = "<div style='margin-top:8px;'><span style='display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;'></span>SNO rings</div>" if legend_selected else ""
-        st.markdown(
-            f"""
-            <div style="margin-top: 8px; margin-bottom: 8px; background: rgba(11,19,32,0.92); color: #f8f9fa; padding: 10px 12px; border: 1px solid #22304a; border-radius: 8px; font-size: 12px; max-width: 340px;">
-              <div style="font-weight: 700; margin-bottom: 6px;">Map legend</div>
-              {legend_lines}
-              {sno_line}
-              {runtime_line}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
-    if location_dirty and has_any_results():
-        st.caption("Selected location changed. Showing the last computed results until you click Compute again.")
-    elif nonlocation_dirty and has_any_results():
-        st.info("Parameters changed. Showing the last computed results until you click Compute again.")
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1979,14 +1909,11 @@ def main():
 
     with tab_over:
         st.subheader("Compute results")
-        if nonlocation_dirty and has_any_results():
-            st.info("Parameters changed. Below you are still seeing the last computed results until you click Compute.")
-        elif location_dirty and has_any_results():
-            st.caption("Location changed after the last run. Click Compute to refresh the results for the new site.")
-        elif st.session_state.get("results_dirty"):
+        if st.session_state.get("results_dirty"):
             st.info("Parameters changed. Click Compute to run with the current settings.")
 
-        submitted = st.button("Compute", type="primary", use_container_width=False)
+        with st.form("compute_form"):
+            submitted = st.form_submit_button("Compute", type="primary")
 
         if submitted:
             t_start = time.perf_counter()
@@ -2056,11 +1983,7 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        errs = st.session_state.get("future_prediction_errors", [])
                         st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
-                        if errs:
-                            st.error("Future prediction diagnostics\n- " + "\n- ".join(errs[:8]))
-                            st.info("This often happens in deployment when outbound access to CelesTrak is blocked or the Skyfield/Pyorbital dependency differs from local.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -2081,10 +2004,13 @@ def main():
             st.session_state["runtime_s"] = float(t_end - t_start)
             st.session_state["last_compute_params"] = current_compute_params
             st.session_state["results_dirty"] = False
+            st.session_state["dirty_reason"] = None
             st.rerun()
 
         # Tables
-        if st.session_state["mode"] == "Past acquisitions" and "past_df" in st.session_state:
+        if st.session_state.get("results_dirty"):
+            st.info("No results shown yet for the current settings. Click Compute.")
+        elif st.session_state["mode"] == "Past acquisitions" and "past_df" in st.session_state:
             df_events_w = st.session_state.get("past_df", pd.DataFrame())
             if df_events_w is None or df_events_w.empty:
                 st.info("No past acquisitions to display (yet).")
