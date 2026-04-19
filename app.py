@@ -1,37 +1,16 @@
 #############################################
-# app.py
-###############################################################
-# OpenCalValPlan
-# A Reproducible System for Multi-Sensor Calibration, Validation,
-# and SNO Planning
+# app.py 
 #
-# 🎯 Accepted at IEEE IGARSS 2026 : https://2026.ieeeigarss.org/
-#
-# Correponding Author:
-#   Sandeep Kumar Chittimalli
-# Co-authors  
-#   Vasala Saicharan
-#   Suman Bhatta
-#   Farhad Roni
-#
-# Developer:
-#   Sandeep Kumar Chittimalli
-#   https://sandeepkumarchittimalli.github.io
-#
-# Accepted Papers List:
-#   https://2026.ieeeigarss.org/papers/accepted_papers.php
-#
-# Description:
-#   OpenCalValPlan is a reproducible framework for planning and
-#   analyzing multi-sensor calibration and validation campaigns,
-#   including Simultaneous Nadir Overpass (SNO) detection and analysis.
-#
-# License:
-#   © 2026 Sandeep Kumar Chittimalli
-#   
-#
-###############################################################
-
+# Features:
+# - Map at TOP (before tabs)
+# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
+# - Only rerun on true "background click" to set site (not cluster/marker clicks)
+# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
+# - MarkerCluster so all stars are visible (no overlap hiding)
+# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
+# - Runtime shown only total, big + colored (and can be placed on map)
+# - Metrics tab: acquisition/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
+# - Time series tabs: only when reflectance sampling enabled
 #############################################
 
 from __future__ import annotations
@@ -550,15 +529,13 @@ project_id = st.sidebar.text_input(
 )  
 
 submit_project = st.sidebar.button("Submit Project ID")
-if submit_project:
-    st.session_state["project_ready"] = True
+
+if not submit_project:
+    st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
+    st.stop()
 
 if not project_id:
     st.sidebar.info("Enter your GEE project ID.")
-    st.stop()
-
-if not st.session_state.get("project_ready", False):
-    st.sidebar.info("Enter your project ID and click Submit Project ID.")
     st.stop()
 
 try:
@@ -672,15 +649,14 @@ def add_star(layer, lat, lon, color_hex="#00FFFF", tooltip="", popup_html=""):
     ).add_to(layer)
 
 
-def add_sno_ring(layer, lat, lon, color="#FFD43B", popup_html: str = ""):
+def add_sno_ring(layer, lat, lon, color="#FFD43B"):
     folium.CircleMarker(
         location=[lat, lon],
         radius=10,
         color=color,
         weight=3,
         fill=False,
-        opacity=0.95,
-        popup=folium.Popup(popup_html, max_width=450) if popup_html else None,
+        opacity=0.95
     ).add_to(layer)
 
 
@@ -821,7 +797,7 @@ def _add_centroid_safe(img: ee.Image, pt: ee.Geometry) -> ee.Image:
     })
 
 
-#@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=True)
 def gee_past_acquisitions(
     lat: float,
     lon: float,
@@ -1436,8 +1412,6 @@ def main():
         st.session_state["date_range"] = (today - timedelta(days=90), today - timedelta(days=1))
     if "site_choice" not in st.session_state:
         st.session_state["site_choice"] = "Crater Lake (OR)"
-    if "run_analysis" not in st.session_state:
-        st.session_state["run_analysis"] = False
 
     # Apply map updates before widgets
     if "map_lat" in st.session_state and "map_lon" in st.session_state:
@@ -1669,9 +1643,6 @@ def main():
         min_elev_deg = float(MIN_ELEV_DEG_DEFAULT)
         future_engine = "Pyorbital (fallback)"
 
-    if st.sidebar.button("🚀 Compute", type="primary"):
-        st.session_state["run_analysis"] = True
-
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
     st.caption("Zoom/pan/cluster click will NOT reset the map. Click empty map area to set site.")
@@ -1792,22 +1763,10 @@ def main():
                         )
                         if kA in df_idx.index:
                             rrA = df_idx.loc[kA]
-                            popup_html = (
-                                f"<b>SNO pair</b><br>"
-                                f"{srow['sat_a']} @ {srow['time_a']}<br>"
-                                f"{srow['sat_b']} @ {srow['time_b']}<br>"
-                                f"Δt={float(srow['dt_minutes']):.2f} min"
-                            )
-                            add_sno_ring(sno_layer, float(rrA["scene_center_lat"]), float(rrA["scene_center_lon"]), popup_html=popup_html)
+                            add_sno_ring(sno_layer, float(rrA["scene_center_lat"]), float(rrA["scene_center_lon"]))
                         if kB in df_idx.index:
                             rrB = df_idx.loc[kB]
-                            popup_html = (
-                                f"<b>SNO pair</b><br>"
-                                f"{srow['sat_a']} @ {srow['time_a']}<br>"
-                                f"{srow['sat_b']} @ {srow['time_b']}<br>"
-                                f"Δt={float(srow['dt_minutes']):.2f} min"
-                            )
-                            add_sno_ring(sno_layer, float(rrB["scene_center_lat"]), float(rrB["scene_center_lon"]), popup_html=popup_html)
+                            add_sno_ring(sno_layer, float(rrB["scene_center_lat"]), float(rrB["scene_center_lon"]))
                     except Exception:
                         continue
 
@@ -1836,15 +1795,7 @@ def main():
         df_sno = st.session_state.get("future_sno", pd.DataFrame())
         selected = st.session_state.get("future_selected", [])
 
-        star_cluster = MarkerCluster(
-            name="Passes ★",
-            options={
-                "spiderfyOnMaxZoom": True,
-                "showCoverageOnHover": False,
-                "zoomToBoundsOnClick": True,
-                "disableClusteringAtZoom": 12,
-            },
-        ).add_to(m)
+        star_cluster = MarkerCluster(name="Passes ★").add_to(m)
 
         if df_raw is not None and not df_raw.empty:
             df_plot = df_raw.copy()
@@ -1882,22 +1833,10 @@ def main():
                         kB = (str(srow["sat_b"]), normalize_time_to_sec(srow["time_b"]))
                         if kA in df_idx.index:
                             rrA = df_idx.loc[kA]
-                            popup_html = (
-                                f"<b>Future SNO pair</b><br>"
-                                f"{srow['sat_a']} @ {srow['time_a']}<br>"
-                                f"{srow['sat_b']} @ {srow['time_b']}<br>"
-                                f"Δt={float(srow['dt_minutes']):.2f} min"
-                            )
-                            add_sno_ring(sno_layer, float(rrA["sat_sub_lat"]), float(rrA["sat_sub_lon"]), popup_html=popup_html)
+                            add_sno_ring(sno_layer, float(rrA["sat_sub_lat"]), float(rrA["sat_sub_lon"]))
                         if kB in df_idx.index:
                             rrB = df_idx.loc[kB]
-                            popup_html = (
-                                f"<b>Future SNO pair</b><br>"
-                                f"{srow['sat_a']} @ {srow['time_a']}<br>"
-                                f"{srow['sat_b']} @ {srow['time_b']}<br>"
-                                f"Δt={float(srow['dt_minutes']):.2f} min"
-                            )
-                            add_sno_ring(sno_layer, float(rrB["sat_sub_lat"]), float(rrB["sat_sub_lon"]), popup_html=popup_html)
+                            add_sno_ring(sno_layer, float(rrB["sat_sub_lat"]), float(rrB["sat_sub_lon"]))
                     except Exception:
                         continue
 
@@ -1981,10 +1920,10 @@ def main():
             st.info("Skyfield not installed. To enable: `pip install skyfield sgp4`")
 
     with tab_over:
-        st.subheader("Compute results")
-        st.caption("Adjust inputs in the sidebar, then click 🚀 Compute.")
+        st.subheader("Compute results (click Compute below)")
 
-        submitted = st.session_state.get("run_analysis", False)
+        with st.form("compute_form"):
+            submitted = st.form_submit_button("Compute", type="primary")
 
         if submitted:
             t_start = time.perf_counter()
@@ -2074,7 +2013,6 @@ def main():
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
-            st.session_state["run_analysis"] = False
             st.rerun()
 
         # Tables
@@ -2229,4 +2167,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
