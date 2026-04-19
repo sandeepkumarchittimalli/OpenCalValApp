@@ -421,42 +421,43 @@ if "google_tokens" not in st.session_state:
 
 st.sidebar.success("Google account connected ✅")
 
-if "gee_submitted" not in st.session_state:
-    st.session_state["gee_submitted"] = False
-if "latest_projectid" not in st.session_state:
-    st.session_state["latest_projectid"] = ""
+# ------------------- PROJECT ID -------------------
+if "project_submitted" not in st.session_state:
+    st.session_state["project_submitted"] = False
+if "submitted_project_id" not in st.session_state:
+    st.session_state["submitted_project_id"] = ""
 
-with st.sidebar.form("gee_form"):
-    gee_project_id = st.text_input(
+with st.sidebar.form("gee_project_form"):
+    project_id_input = st.text_input(
         "Enter your GEE Project ID",
-        value=st.session_state["latest_projectid"],
+        value=st.session_state["submitted_project_id"],
         help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
         key="gee_project_id_input",
     )
-    submitted = st.form_submit_button("Submit Project ID")
+    submit_project = st.form_submit_button("Submit Project ID")
 
-if submitted:
-    st.session_state["latest_projectid"] = gee_project_id.strip()
-    st.session_state["gee_submitted"] = True
+if submit_project:
+    st.session_state["submitted_project_id"] = project_id_input.strip()
+    st.session_state["project_submitted"] = True
     st.rerun()
 
-if not st.session_state["gee_submitted"]:
+if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
     st.stop()
 
-latest_projectid = st.session_state["latest_projectid"].strip()
-if not latest_projectid:
+project_id = st.session_state["submitted_project_id"].strip()
+if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
 if st.sidebar.button("Change Project ID"):
-    st.session_state["gee_submitted"] = False
-    st.session_state["latest_projectid"] = ""
+    st.session_state["project_submitted"] = False
+    st.session_state["submitted_project_id"] = ""
     st.rerun()
 
 try:
-    ee_status = init_ee(latest_projectid)
-    st.sidebar.success(f"GEE initialized successfully ✅ ({latest_projectid})")
+    ee_status = init_ee(project_id)
+    st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
 except Exception as e:
     st.sidebar.error("GEE initialization failed ❌")
     st.sidebar.write(str(e))
@@ -1350,7 +1351,7 @@ def main():
 
     # GEE init
     try:
-        mode_gee = init_ee(latest_projectid)
+        mode_gee = init_ee(project_id)
         st.caption(f"Earth Engine initialized using: {mode_gee}")
     except Exception as e:
         st.error(str(e))
@@ -1866,7 +1867,7 @@ def main():
                             selected_missions=tuple(selected_past),
                             site_buffer_m=float(site_buffer_m),
                             sample_reflectance=bool(sample_reflectance),
-                            project_id=latest_projectid,
+                            project_id=project_id,
                         )
 
                     if df_events.empty:
