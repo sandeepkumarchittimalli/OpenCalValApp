@@ -11,7 +11,7 @@
 # - Runtime shown only total, big + colored (and can be placed on map)
 # - Metrics tab: acquisition/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
 # - Time series tabs: only when reflectance sampling enabled
-#############################################
+##############################################
 
 from __future__ import annotations
 
