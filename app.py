@@ -438,6 +438,7 @@ with st.sidebar.form("gee_form"):
 if submitted:
     st.session_state["latest_projectid"] = gee_project_id.strip()
     st.session_state["gee_submitted"] = True
+    st.rerun()
 
 if not st.session_state["gee_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -1521,12 +1522,7 @@ def main():
         key="site_buffer_m"
     )
 
-    sample_reflectance = st.sidebar.checkbox(
-        "Also sample reflectance at site (slower)",
-        value=False,
-        help="Enables time series tabs (when those missions support reflectance sampling).",
-        key="sample_reflectance"
-    )
+    sample_reflectance = False
 
     if st.session_state["mode"] == "Future pass planning":
         overpass_tol_km = st.sidebar.slider(
@@ -1825,8 +1821,8 @@ def main():
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
 
     # -------------------- Tabs AFTER map --------------------
-    tab_about, tab_over, tab_metrics, tab_ls, tab_s2 = st.tabs(
-        ["About", "Overpasses & Weather", "Metrics", "Landsat Time Series", "Sentinel-2 Time Series"]
+    tab_about, tab_over, tab_metrics = st.tabs(
+        ["About", "Overpasses & Weather", "Metrics"]
     )
 
     with tab_about:
@@ -2046,41 +2042,8 @@ def main():
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
-    with tab_ls:
-        st.subheader("Landsat time series (requires reflectance sampling)")
-        df_events_w = st.session_state.get("past_df", pd.DataFrame())
-        if df_events_w is None or df_events_w.empty:
-            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
-        else:
-            ls_keys = ["LANDSAT 4 TM", "LANDSAT 5 TM", "LANDSAT 7", "LANDSAT 8", "LANDSAT 9"]
-            if "sat_name" not in df_events_w.columns:
-                st.info("No Landsat data from last run.")
-            else:
-                df_ls = df_events_w[df_events_w["sat_name"].isin(ls_keys)].copy()
-                if df_ls.empty:
-                    st.info("No Landsat TM/ETM+/OLI acquisitions in the last run.")
-                else:
-                    plot_timeseries(df_ls, ["refl_B2", "refl_B3", "refl_B4", "refl_B5"],
-                                    "Landsat reflectance (B2/B3/B4/B5)")
-
-    with tab_s2:
-        st.subheader("Sentinel-2 time series (requires reflectance sampling)")
-        df_events_w = st.session_state.get("past_df", pd.DataFrame())
-        if df_events_w is None or df_events_w.empty:
-            st.info("Run Past acquisitions with 'Also sample reflectance' enabled.")
-        else:
-            if "sat_name" not in df_events_w.columns:
-                st.info("No Sentinel-2 data from last run.")
-            else:
-                df_s2 = df_events_w[df_events_w["sat_name"].isin(["SENTINEL-2A", "SENTINEL-2B"])].copy()
-                if df_s2.empty:
-                    st.info("No Sentinel-2A/B acquisitions in the last run.")
-                else:
-                    plot_timeseries(df_s2, ["refl_B2", "refl_B3", "refl_B4", "refl_B8"],
-                                    "Sentinel-2 reflectance (B2/B3/B4/B8)")
 
 
 if __name__ == "__main__":
     main()
-
 
