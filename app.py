@@ -417,9 +417,11 @@ st.sidebar.markdown(
 )
 
 if "google_tokens" not in st.session_state:
-    st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
+    #st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
+    if st.sidebar.button("🔗 Connect Google Earth Engine", type="primary", use_container_width=True):
+    st.markdown(f'<meta http-equiv="refresh" content="0; url={OAUTH_BACKEND_START}">', unsafe_allow_html=True)
     st.sidebar.caption("Secure Google authentication")
-    st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
+    #st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
     st.sidebar.warning("Connect your Google account first.")
     st.stop()
 
