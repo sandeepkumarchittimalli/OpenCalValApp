@@ -424,7 +424,7 @@ if "google_tokens" not in st.session_state:
 )
 
     st.sidebar.link_button(
-    "🔑 Sign in with Google Earth Engine",
+    "🔑 Sign in with Google",
     OAUTH_BACKEND_START,
     use_container_width=True
     )
