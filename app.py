@@ -912,12 +912,34 @@ BUNDLED_TLES: Dict[int, Tuple[str, str, str]] = {
             "2 37849  98.7877  16.7790 0000759 190.5751 169.5409 14.19545565745250"),
 }
 
+def _normalize_tle_line1(line1: str) -> str:
+    line1 = str(line1).rstrip("\n\r")
+    if len(line1) >= 69:
+        return line1[:69]
+    parts = line1.split()
+    if len(parts) >= 9 and parts[0] == "1":
+        last = parts[8]
+        elset = last[:-1] if len(last) >= 2 else "0"
+        checksum = last[-1] if last else "0"
+        rebuilt = (
+            f"1 {parts[1]:<6} {parts[2]:<8} {parts[3]:>14} {parts[4]:>10} "
+            f"{parts[5]:>8} {parts[6]:>8} {parts[7]:1} {elset:>4}{checksum}"
+        )
+        return rebuilt[:69].ljust(69)
+    return line1
+
+
+def _normalize_tle_line2(line2: str) -> str:
+    line2 = str(line2).rstrip("\n\r")
+    return line2[:69] if len(line2) >= 69 else line2
+
+
 def _parse_tle_text(tle_text: str, fallback_name: str) -> Tuple[str, str, str]:
-    lines = [l.strip() for l in str(tle_text).splitlines() if l.strip()]
+    lines = [l.rstrip("\n\r") for l in str(tle_text).splitlines() if l.strip()]
     if len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
-        return lines[0], lines[1], lines[2]
+        return lines[0].strip(), _normalize_tle_line1(lines[1]), _normalize_tle_line2(lines[2])
     if len(lines) >= 2 and lines[0].startswith("1 ") and lines[1].startswith("2 "):
-        return fallback_name, lines[0], lines[1]
+        return fallback_name, _normalize_tle_line1(lines[0]), _normalize_tle_line2(lines[1])
     raise ValueError(f"Unexpected TLE payload for {fallback_name}: {tle_text[:200]}")
 
 def fetch_tle_from_celestrak(norad_id: int) -> str:
