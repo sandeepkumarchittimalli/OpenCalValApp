@@ -874,17 +874,84 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
     return out
 
 
+
 # ------------------- FUTURE (TLE) -------------------
 
-def fetch_tle_from_celestrak(norad_id: int) -> str:
-    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    tle_text = r.text.strip()
-    if tle_text.count("\n") < 2:
-        raise ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text}")
-    return tle_text
+# Bundled TLE fallback used when Streamlit Cloud cannot reach CelesTrak reliably.
+# These were fetched from current CelesTrak GP 2LE results on 2026-04-20.
+BUNDLED_TLES: Dict[int, Tuple[str, str, str]] = {
+    39084: ("LANDSAT 8",
+            "1 39084U 13008A 26109.79321061  .00000235  00000+0  62232-4 0  9991",
+            "2 39084  98.1858 180.8293 0001182  96.3928 263.7406 14.57120205689395"),
+    49260: ("LANDSAT 9",
+            "1 49260U 21088A 26109.48436079  .00000247  00000+0  64761-4 0  9999",
+            "2 49260  98.1880 180.5973 0001196 102.5577 257.5755 14.57115921242453"),
+    40697: ("SENTINEL-2A",
+            "1 40697U 15028A 26110.17276050  .00000079  00000+0  46872-4 0  9996",
+            "2 40697  98.5630 185.8554 0001316  87.9036 272.2298 14.30821509565437"),
+    42063: ("SENTINEL-2B",
+            "1 42063U 17013A 26050.30537140  .00000167  00000+0  80496-4 0  9997",
+            "2 42063  98.5696 126.7629 0001088  91.6583 268.4724 14.30812851467780"),
+    39634: ("SENTINEL-1A",
+            "1 39634U 14016A 26089.57894760  .00000001  00000+0  98567-5 0  9998",
+            "2 39634  98.1814  98.2500 0001353  83.3358 276.7996 14.59199186638550"),
+    41335: ("SENTINEL-3A",
+            "1 41335U 16011A 26109.79836734  .00000068  00000+0  46325-4 0  9997",
+            "2 41335  98.6279 178.0111 0001000  95.3081 264.8214 14.26737165529730"),
+    43437: ("SENTINEL-3B",
+            "1 43437U 18039A 26109.21045990  .00000084  00000+0  52882-4 0  9990",
+            "2 43437  98.6278 177.5793 0001642  98.6087 261.5279 14.26731738415715"),
+    25994: ("TERRA (MODIS)",
+            "1 25994U 99068A 26087.63646833  .00000436  00000+0  97816-4 0  9990",
+            "2 25994  97.9553 140.3437 0003569 111.9893  49.4323 14.61034278397848"),
+    27424: ("AQUA (MODIS)",
+            "1 27424U 02022A 26087.58697034  .00001029  00000+0  21489-3 0  9998",
+            "2 27424  98.4205  55.3007 0001125 117.9874  11.4525 14.62019053271497"),
+    37849: ("SUOMI NPP (VIIRS)",
+            "1 37849U 11061A 26075.22783197  .00000092  00000+0  64827-4 0  9990",
+            "2 37849  98.7877  16.7790 0000759 190.5751 169.5409 14.19545565745250"),
+}
 
+def _parse_tle_text(tle_text: str, fallback_name: str) -> Tuple[str, str, str]:
+    lines = [l.strip() for l in str(tle_text).splitlines() if l.strip()]
+    if len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
+        return lines[0], lines[1], lines[2]
+    if len(lines) >= 2 and lines[0].startswith("1 ") and lines[1].startswith("2 "):
+        return fallback_name, lines[0], lines[1]
+    raise ValueError(f"Unexpected TLE payload for {fallback_name}: {tle_text[:200]}")
+
+def fetch_tle_from_celestrak(norad_id: int) -> str:
+    urls = [
+        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=2LE",
+        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+        f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=2LE",
+        f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+    ]
+    headers = {"User-Agent": "Mozilla/5.0 OpenCalValPlan/1.0"}
+    sat_name = next((k for k,v in SATELLITE_NORAD.items() if v == norad_id), f"NORAD {norad_id}")
+    last_error = None
+
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=10, headers=headers)
+            r.raise_for_status()
+            tle_text = r.text.strip()
+            if "No GP data found" in tle_text:
+                raise ValueError(f"No GP data found for NORAD {norad_id}")
+            name, line1, line2 = _parse_tle_text(tle_text, sat_name)
+            st.session_state["future_tle_source"] = "live"
+            return f"{name}\n{line1}\n{line2}"
+        except Exception as e:
+            last_error = e
+            continue
+
+    bundled = BUNDLED_TLES.get(norad_id)
+    if bundled:
+        st.session_state["future_tle_source"] = "bundled"
+        name, line1, line2 = bundled
+        return f"{name}\n{line1}\n{line2}"
+
+    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}: {last_error}")
 
 @st.cache_resource(show_spinner=False)
 def get_orbital_cached(sat_name: str) -> Orbital:
@@ -892,10 +959,8 @@ def get_orbital_cached(sat_name: str) -> Orbital:
     if norad is None:
         raise ValueError(f"No NORAD ID for {sat_name}")
     tle_text = fetch_tle_from_celestrak(norad)
-    lines = [l.strip() for l in tle_text.splitlines() if l.strip()]
-    name, line1, line2 = lines[0], lines[1], lines[2]
+    name, line1, line2 = _parse_tle_text(tle_text, sat_name)
     return Orbital(name, line1=line1, line2=line2)
-
 
 @st.cache_resource(show_spinner=False)
 def get_skyfield_sat_cached(sat_name: str):
@@ -905,12 +970,10 @@ def get_skyfield_sat_cached(sat_name: str):
     if norad is None:
         raise ValueError(f"No NORAD ID for {sat_name}")
     tle_text = fetch_tle_from_celestrak(norad)
-    lines = [l.strip() for l in tle_text.splitlines() if l.strip()]
-    name, l1, l2 = lines[0], lines[1], lines[2]
+    name, l1, l2 = _parse_tle_text(tle_text, sat_name)
     ts = load.timescale()
     sat = EarthSatellite(l1, l2, name, ts)
     return sat, ts
-
 
 def _default_half_swath_km(sat_name: str) -> Optional[float]:
     s = (sat_name or "").upper()
@@ -925,7 +988,6 @@ def _default_half_swath_km(sat_name: str) -> Optional[float]:
     if "VIIRS" in s or "NPP" in s:
         return 1520.0
     return None
-
 
 def _refine_minimum_distance_pyorbital(
     orb: Orbital,
@@ -952,8 +1014,6 @@ def _refine_minimum_distance_pyorbital(
             best = (t, float(sat_lat), float(sat_lon), float(alt_km), float(dist_km), float(el))
     return best
 
-
-@st.cache_data(show_spinner=True)
 def predict_future_passes_pyorbital(
     sat_names: Tuple[str, ...],
     lat: float,
@@ -961,7 +1021,7 @@ def predict_future_passes_pyorbital(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float,
+    min_elev_deg: float
 ) -> pd.DataFrame:
     start_time = datetime.strptime(start_date_str + "-00-00-00", "%Y-%m-%d-%H-%M-%S")
     end_time = datetime.strptime(end_date_str + "-23-59-30", "%Y-%m-%d-%H-%M-%S")
@@ -982,10 +1042,7 @@ def predict_future_passes_pyorbital(
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
-        try:
-            orb = get_orbital_cached(sat)
-        except Exception:
-            continue
+        orb = get_orbital_cached(sat)
 
         half_swath = _default_half_swath_km(sat)
         eff_tol = float(user_tol_km) if half_swath is None else max(float(user_tol_km), float(half_swath))
@@ -1059,7 +1116,6 @@ def predict_future_passes_pyorbital(
     df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
     return df.sort_values(["sat_name", "time"]).reset_index(drop=True)
 
-
 @st.cache_data(show_spinner=True)
 def predict_future_passes_skyfield(
     sat_names: Tuple[str, ...],
@@ -1068,7 +1124,7 @@ def predict_future_passes_skyfield(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float,
+    min_elev_deg: float
 ) -> pd.DataFrame:
     if not SKYFIELD_AVAILABLE:
         return pd.DataFrame()
@@ -1086,18 +1142,12 @@ def predict_future_passes_skyfield(
     for sat in sat_names:
         if sat not in SATELLITE_NORAD:
             continue
-        try:
-            sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception:
-            continue
+        sat_obj, _ = get_skyfield_sat_cached(sat)
 
         half_swath = _default_half_swath_km(sat)
         eff_tol = float(user_tol_km) if half_swath is None else max(float(user_tol_km), float(half_swath))
 
-        try:
-            t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception:
-            continue
+        t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
 
         current_triplet = {}
         pass_triplets = []
@@ -1166,37 +1216,6 @@ def predict_future_passes_skyfield(
     df = pd.DataFrame(rows)
     df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
     return df.sort_values(["sat_name", "time"]).reset_index(drop=True)
-
-
-def compute_future_snos(df_pred: pd.DataFrame, sno_window_minutes: float) -> pd.DataFrame:
-    if df_pred is None or df_pred.empty:
-        return pd.DataFrame()
-
-    df = df_pred.copy()
-    df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
-    df = df.sort_values("time").reset_index(drop=True)
-
-    times = df["time"].to_numpy(dtype="datetime64[ns]")
-    tol = np.timedelta64(int(float(sno_window_minutes) * 60), "s")
-
-    out = []
-    for i, t in enumerate(times):
-        right = np.searchsorted(times, t + tol, side="right")
-        for j in range(i + 1, right):
-            if df.loc[i, "sat_name"] == df.loc[j, "sat_name"]:
-                continue
-            dt_min = float((times[j] - t) / np.timedelta64(1, "m"))
-            out.append({
-                "sat_a": df.loc[i, "sat_name"],
-                "time_a": df.loc[i, "time"],
-                "sat_b": df.loc[j, "sat_name"],
-                "time_b": df.loc[j, "time"],
-                "dt_minutes": abs(dt_min),
-            })
-
-    return (pd.DataFrame(out).sort_values("dt_minutes").reset_index(drop=True)) if out else pd.DataFrame()
-
-
 # ------------------- METRICS -------------------
 
 def acquisition_metrics(df: pd.DataFrame, sat_col: str = "sat_name") -> pd.DataFrame:
@@ -1875,8 +1894,7 @@ def main():
                     st.warning("Select at least one satellite for future planning.")
                 else:
                     with st.spinner("Predicting future passes..."):
-                        use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
-                        if use_skyfield:
+                        if SKYFIELD_AVAILABLE and ("Skyfield" in future_engine):
                             df_pred = predict_future_passes_skyfield(
                                 sat_names=tuple(selected_future),
                                 lat=lat, lon=lon,
@@ -1897,7 +1915,11 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        tle_source = st.session_state.get("future_tle_source", "unknown")
+                        st.warning(
+                            "No visible passes found within tolerance. "
+                            f"TLE source used: {tle_source}. Try increasing tolerance/date window."
+                        )
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
