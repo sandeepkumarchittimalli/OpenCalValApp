@@ -1426,7 +1426,6 @@ def reset_app_inputs():
     """Reset user-adjustable app inputs while keeping auth/project state."""
     today = datetime.utcnow().date()
     yesterday = today - timedelta(days=1)
-    tomorrow = today + timedelta(days=1)
 
     # Clear computed outputs and transient map/click state
     keys_to_remove = [
@@ -1439,30 +1438,27 @@ def reset_app_inputs():
     for k in keys_to_remove:
         st.session_state.pop(k, None)
 
-    # Reset controls to app defaults
+    # Reset non-widget state first
     st.session_state["lat"] = float(DEFAULT_LAT)
     st.session_state["lon"] = float(DEFAULT_LON)
-    st.session_state["lat_input"] = float(DEFAULT_LAT)
-    st.session_state["lon_input"] = float(DEFAULT_LON)
-    st.session_state["site_choice"] = "Crater Lake (OR)"
     st.session_state["_site_choice_applied"] = "Crater Lake (OR)"
     st.session_state["mode"] = "Past acquisitions"
-    st.session_state["mode_choice"] = "Past acquisitions"
     st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
-    st.session_state["date_range_widget"] = (today - timedelta(days=90), yesterday)
-    st.session_state["selected_past"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
-    st.session_state["selected_future"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
-    st.session_state["site_buffer_m"] = int(DEFAULT_SITE_BUFFER_M)
-    st.session_state["overpass_tol_km"] = float(DEFAULT_OVERPASS_TOL_KM)
-    st.session_state["min_elev_deg"] = float(MIN_ELEV_DEG_DEFAULT)
-    st.session_state["future_engine"] = "Skyfield (more accurate)" if SKYFIELD_AVAILABLE else "Pyorbital (fallback)"
-    st.session_state["sno_window_choice"] = "30 min"
     st.session_state["sno_window_min"] = 30.0
-    st.session_state["sno_window_custom"] = 60
     st.session_state["map_view_center"] = [float(DEFAULT_LAT), float(DEFAULT_LON)]
     st.session_state["map_view_zoom"] = 7
 
+    # Remove widget-backed keys so Streamlit recreates them with defaults on rerun
+    widget_keys_to_clear = [
+        "lat_input", "lon_input", "site_choice", "mode_choice", "date_range_widget",
+        "selected_past", "selected_future", "site_buffer_m", "overpass_tol_km",
+        "min_elev_deg", "future_engine", "sno_window_choice", "sno_window_custom",
+    ]
+    for k in widget_keys_to_clear:
+        st.session_state.pop(k, None)
+
     st.cache_data.clear()
+    st.rerun()
     st.rerun()
 
 def main():
