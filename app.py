@@ -1459,7 +1459,6 @@ def reset_app_inputs():
 
     st.cache_data.clear()
     st.rerun()
-    st.rerun()
 
 def main():
 
@@ -1483,8 +1482,10 @@ def main():
         st.session_state["lat"] = float(st.session_state.pop("map_lat"))
         st.session_state["lon"] = float(st.session_state.pop("map_lon"))
 
-    st.session_state["lat_input"] = float(st.session_state["lat"])
-    st.session_state["lon_input"] = float(st.session_state["lon"])
+    if "lat_input" not in st.session_state:
+        st.session_state["lat_input"] = float(st.session_state["lat"])
+    if "lon_input" not in st.session_state:
+        st.session_state["lon_input"] = float(st.session_state["lon"])
 
     # Persist map view
     if "map_view_center" not in st.session_state:
@@ -1573,8 +1574,16 @@ def main():
         key="date_range_widget",
     )
 
-    if isinstance(date_range, tuple):
-        start_date, end_date = date_range
+    if isinstance(date_range, (tuple, list)):
+        if len(date_range) >= 2:
+            start_date, end_date = date_range[0], date_range[1]
+        elif len(date_range) == 1:
+            prev_start, prev_end = st.session_state.get("date_range", (today - timedelta(days=90), yesterday))
+            start_date = date_range[0]
+            end_date = prev_end if prev_end >= start_date else start_date
+        else:
+            prev_start, prev_end = st.session_state.get("date_range", (today - timedelta(days=90), yesterday))
+            start_date, end_date = prev_start, prev_end
     else:
         start_date = date_range
         end_date = date_range
