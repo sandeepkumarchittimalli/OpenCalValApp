@@ -877,31 +877,13 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
 # ------------------- FUTURE (TLE) -------------------
 
 def fetch_tle_from_celestrak(norad_id: int) -> str:
-    urls = [
-        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
-        f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
-    ]
-    headers = {"User-Agent": "Mozilla/5.0 OpenCalValPlan/1.0"}
-    last_error = None
-    errors = []
-    for url in urls:
-        try:
-            r = requests.get(url, timeout=8, headers=headers)
-            r.raise_for_status()
-            tle_text = r.text.strip()
-            lines = [l.strip() for l in tle_text.splitlines() if l.strip()]
-            if "No GP data found" in tle_text:
-                raise ValueError(f"No GP data found for NORAD {norad_id}")
-            if len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
-                return "\n".join(lines[:3])
-            if len(lines) >= 2 and lines[0].startswith("1 ") and lines[1].startswith("2 "):
-                return f"NORAD {norad_id}\n{lines[0]}\n{lines[1]}"
-            raise ValueError(f"Unexpected TLE payload for NORAD {norad_id}: {tle_text[:200]}")
-        except Exception as e:
-            last_error = e
-            errors.append(f"{url} -> {e}")
-            continue
-    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}. Tried: {' | '.join(errors) if errors else last_error}")
+    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    tle_text = r.text.strip()
+    if tle_text.count("\n") < 2:
+        raise ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text}")
+    return tle_text
 
 
 @st.cache_resource(show_spinner=False)
@@ -928,11 +910,6 @@ def get_skyfield_sat_cached(sat_name: str):
     ts = load.timescale()
     sat = EarthSatellite(l1, l2, name, ts)
     return sat, ts
-
-
-def _log_future_issue(label: str, exc: Exception):
-    errs = st.session_state.setdefault("future_fetch_errors", [])
-    errs.append(f"{label}: {exc}")
 
 
 def _default_half_swath_km(sat_name: str) -> Optional[float]:
@@ -977,102 +954,6 @@ def _refine_minimum_distance_pyorbital(
 
 
 @st.cache_data(show_spinner=True)
-def _predict_future_passes_pyorbital_next_passes(
-    sat_names: Tuple[str, ...],
-    lat: float,
-    lon: float,
-    start_date_str: str,
-    end_date_str: str,
-    user_tol_km: float,
-    min_elev_deg: float,
-) -> pd.DataFrame:
-    start_time = datetime.strptime(start_date_str + "-00-00-00", "%Y-%m-%d-%H-%M-%S")
-    end_time = datetime.strptime(end_date_str + "-23-59-30", "%Y-%m-%d-%H-%M-%S")
-    total_hours = max(1.0, (end_time - start_time).total_seconds() / 3600.0)
-
-    obs_alt_m = 0.0
-    rows: List[Dict[str, Any]] = []
-
-    for sat in sat_names:
-        if sat not in SATELLITE_NORAD:
-            continue
-        try:
-            orb = get_orbital_cached(sat)
-        except Exception as e:
-            _log_future_issue(f"{sat} TLE/orbital", e)
-            continue
-
-        half_swath = _default_half_swath_km(sat)
-        eff_tol = float(user_tol_km) if half_swath is None else max(float(user_tol_km), float(half_swath))
-
-        get_next = getattr(orb, "get_next_passes", None)
-        if get_next is None:
-            continue
-
-        passes = None
-        call_errors = []
-        for args, kwargs in [
-            ((start_time, total_hours, lon, lat, obs_alt_m), {"horizon": float(min_elev_deg)}),
-            ((start_time, total_hours, lon, lat, obs_alt_m), {"tol": 0.001, "horizon": float(min_elev_deg)}),
-            ((start_time, total_hours, lon, lat, obs_alt_m), {}),
-        ]:
-            try:
-                passes = get_next(*args, **kwargs)
-                break
-            except Exception as e:
-                call_errors.append(str(e))
-                passes = None
-
-        if not passes:
-            continue
-
-        for p in passes:
-            t_candidate = None
-            try:
-                if isinstance(p, (list, tuple)) and len(p) >= 3:
-                    t_candidate = p[2]
-                elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                    t_candidate = p[0] + (p[1] - p[0]) / 2
-                else:
-                    t_candidate = p
-            except Exception:
-                t_candidate = None
-
-            if t_candidate is None:
-                continue
-
-            refined = _refine_minimum_distance_pyorbital(
-                orb, lat, lon, t_candidate, min_elev_deg=min_elev_deg, window_s=600, step_s=1
-            )
-            if refined is None and float(min_elev_deg) > 0:
-                refined = _refine_minimum_distance_pyorbital(
-                    orb, lat, lon, t_candidate, min_elev_deg=0.0, window_s=600, step_s=1
-                )
-            if refined is None:
-                continue
-
-            t, slat, slon, alt, dist, elev = refined
-            if dist <= eff_tol:
-                rows.append({
-                    "time": t,
-                    "sat_name": sat,
-                    "closest_distance_km": dist,
-                    "sat_sub_lat": slat,
-                    "sat_sub_lon": slon,
-                    "alt_km": alt,
-                    "elev_deg": elev,
-                    "effective_tol_km": eff_tol,
-                    "engine": "pyorbital-next-passes",
-                })
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
-    return df.sort_values(["sat_name", "time"]).reset_index(drop=True)
-
-
 def predict_future_passes_pyorbital(
     sat_names: Tuple[str, ...],
     lat: float,
@@ -1080,7 +961,7 @@ def predict_future_passes_pyorbital(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float
+    min_elev_deg: float,
 ) -> pd.DataFrame:
     start_time = datetime.strptime(start_date_str + "-00-00-00", "%Y-%m-%d-%H-%M-%S")
     end_time = datetime.strptime(end_date_str + "-23-59-30", "%Y-%m-%d-%H-%M-%S")
@@ -1103,8 +984,7 @@ def predict_future_passes_pyorbital(
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception as e:
-            _log_future_issue(f"{sat} TLE/orbital", e)
+        except Exception:
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1180,72 +1060,6 @@ def predict_future_passes_pyorbital(
     return df.sort_values(["sat_name", "time"]).reset_index(drop=True)
 
 
-def predict_future_passes_with_fallbacks(
-    sat_names: Tuple[str, ...],
-    lat: float,
-    lon: float,
-    start_date_str: str,
-    end_date_str: str,
-    user_tol_km: float,
-    min_elev_deg: float,
-    prefer_skyfield: bool,
-) -> Tuple[pd.DataFrame, str]:
-    attempts = []
-    if prefer_skyfield and SKYFIELD_AVAILABLE:
-        attempts = [
-            ("skyfield", float(min_elev_deg)),
-            ("pyorbital", float(min_elev_deg)),
-            ("pyorbital-next", float(min_elev_deg)),
-            ("pyorbital", 0.0),
-            ("pyorbital-next", 0.0),
-            ("skyfield", 0.0),
-        ]
-    else:
-        attempts = [
-            ("pyorbital", float(min_elev_deg)),
-            ("pyorbital-next", float(min_elev_deg)),
-            ("skyfield", float(min_elev_deg)),
-            ("pyorbital", 0.0),
-            ("pyorbital-next", 0.0),
-            ("skyfield", 0.0),
-        ]
-
-    last_note = ""
-    for engine_name, elev_try in attempts:
-        if engine_name == "skyfield" and not SKYFIELD_AVAILABLE:
-            continue
-        try:
-            if engine_name == "skyfield":
-                df_pred = predict_future_passes_skyfield(
-                    sat_names=sat_names, lat=lat, lon=lon,
-                    start_date_str=start_date_str, end_date_str=end_date_str,
-                    user_tol_km=float(user_tol_km), min_elev_deg=float(elev_try),
-                )
-            elif engine_name == "pyorbital-next":
-                df_pred = _predict_future_passes_pyorbital_next_passes(
-                    sat_names=sat_names, lat=lat, lon=lon,
-                    start_date_str=start_date_str, end_date_str=end_date_str,
-                    user_tol_km=float(user_tol_km), min_elev_deg=float(elev_try),
-                )
-            else:
-                df_pred = predict_future_passes_pyorbital(
-                    sat_names=sat_names, lat=lat, lon=lon,
-                    start_date_str=start_date_str, end_date_str=end_date_str,
-                    user_tol_km=float(user_tol_km), min_elev_deg=float(elev_try),
-                )
-        except Exception as e:
-            last_note = f"{engine_name} failed: {e}"
-            continue
-
-        if not df_pred.empty:
-            note = engine_name if elev_try > 0 else f"{engine_name} (relaxed elevation=0°)"
-            return df_pred, note
-
-        last_note = f"No passes from {engine_name} with min elevation {elev_try:.1f}°"
-
-    return pd.DataFrame(), last_note
-
-
 @st.cache_data(show_spinner=True)
 def predict_future_passes_skyfield(
     sat_names: Tuple[str, ...],
@@ -1254,7 +1068,7 @@ def predict_future_passes_skyfield(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float
+    min_elev_deg: float,
 ) -> pd.DataFrame:
     if not SKYFIELD_AVAILABLE:
         return pd.DataFrame()
@@ -1274,8 +1088,7 @@ def predict_future_passes_skyfield(
             continue
         try:
             sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception as e:
-            _log_future_issue(f"{sat} Skyfield TLE", e)
+        except Exception:
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1283,8 +1096,7 @@ def predict_future_passes_skyfield(
 
         try:
             t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception as e:
-            _log_future_issue(f"{sat} Skyfield find_events", e)
+        except Exception:
             continue
 
         current_triplet = {}
@@ -2062,31 +1874,30 @@ def main():
                 if not selected_future:
                     st.warning("Select at least one satellite for future planning.")
                 else:
-                    st.session_state["future_fetch_errors"] = []
                     with st.spinner("Predicting future passes..."):
-                        prefer_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
-                        df_pred, future_pred_note = predict_future_passes_with_fallbacks(
-                            sat_names=tuple(selected_future),
-                            lat=lat, lon=lon,
-                            start_date_str=start_date_str, end_date_str=end_date_str,
-                            user_tol_km=float(overpass_tol_km),
-                            min_elev_deg=float(min_elev_deg),
-                            prefer_skyfield=prefer_skyfield,
-                        )
-                        st.session_state["future_pred_note"] = future_pred_note
+                        use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
+                        if use_skyfield:
+                            df_pred = predict_future_passes_skyfield(
+                                sat_names=tuple(selected_future),
+                                lat=lat, lon=lon,
+                                start_date_str=start_date_str, end_date_str=end_date_str,
+                                user_tol_km=float(overpass_tol_km),
+                                min_elev_deg=float(min_elev_deg),
+                            )
+                        else:
+                            df_pred = predict_future_passes_pyorbital(
+                                sat_names=tuple(selected_future),
+                                lat=lat, lon=lon,
+                                start_date_str=start_date_str, end_date_str=end_date_str,
+                                user_tol_km=float(overpass_tol_km),
+                                min_elev_deg=float(min_elev_deg),
+                            )
 
                     if df_pred.empty:
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        msg = "No visible passes found within tolerance. Try increasing tolerance/date window."
-                        note = st.session_state.get("future_pred_note", "")
-                        errs = st.session_state.get("future_fetch_errors", [])
-                        if note:
-                            msg += f" Diagnostics: {note}"
-                        if errs:
-                            msg += " Errors: " + " || ".join(errs[:6])
-                        st.warning(msg)
+                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -2102,8 +1913,6 @@ def main():
                         st.session_state["future_df"] = df_pred_w
                         st.session_state["future_sno"] = df_sno_f
                         st.session_state["future_selected"] = list(selected_future)
-                        if st.session_state.get("future_pred_note"):
-                            st.info(f"Future prediction engine used: {st.session_state['future_pred_note']}")
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
@@ -2227,6 +2036,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
