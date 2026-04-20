@@ -440,7 +440,6 @@ if submit_project:
     cleaned_project_id = project_id_input.strip()
     st.session_state["submitted_project_id"] = cleaned_project_id
     st.session_state["project_submitted"] = bool(cleaned_project_id)
-    st.rerun()
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -451,13 +450,7 @@ if not project_id:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
 
-if st.sidebar.button("Change Project ID"):
-    st.session_state["project_submitted"] = False
-    st.session_state["submitted_project_id"] = ""
-    st.cache_resource.clear()
-    st.rerun()
-
-if st.sidebar.button("Reset App"):
+if st.sidebar.button("Reset Inputs"):
     keys_to_keep = {"google_tokens"}
     for k in list(st.session_state.keys()):
         if k not in keys_to_keep:
@@ -520,6 +513,16 @@ def style_quality_rows(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
 
 def mission_hex_color(mission_key: str) -> str:
     return MISSION_COLORS.get(mission_key, "#00E5FF")
+
+
+def is_same_platform_variant(a: str, b: str) -> bool:
+    a = str(a).upper().strip()
+    b = str(b).upper().strip()
+    pairs = {
+        frozenset(["LANDSAT 4 MSS", "LANDSAT 4 TM"]),
+        frozenset(["LANDSAT 5 MSS", "LANDSAT 5 TM"]),
+    }
+    return frozenset([a, b]) in pairs
 
 
 def normalize_time_to_sec(t: Any) -> pd.Timestamp:
@@ -853,6 +856,8 @@ def compute_snos_allpairs(df_events: pd.DataFrame, sno_window_minutes: float) ->
         for j in range(i + 1, right):
             if df.loc[i, "sat_name"] == df.loc[j, "sat_name"]:
                 continue
+            if is_same_platform_variant(df.loc[i, "sat_name"], df.loc[j, "sat_name"]):
+                continue
             dt_min = float((times[j] - t) / np.timedelta64(1, "m"))
             out.append({
                 "time_a": df.loc[i, "time"],
@@ -1134,15 +1139,19 @@ def predict_future_passes_skyfield(
     min_elev_deg: float,
 ) -> pd.DataFrame:
     if not SKYFIELD_AVAILABLE:
-        return pd.DataFrame()
+        st.session_state.setdefault("future_fetch_errors", {})["Skyfield"] = "Skyfield not installed; using Pyorbital fallback."
+        return predict_future_passes_pyorbital(sat_names, lat, lon, start_date_str, end_date_str, user_tol_km, min_elev_deg)
 
     start_dt = datetime.strptime(start_date_str + " 00:00:00", "%Y-%m-%d %H:%M:%S").replace(tzinfo=utc)
     end_dt = datetime.strptime(end_date_str + " 23:59:30", "%Y-%m-%d %H:%M:%S").replace(tzinfo=utc)
+    total_days = (end_dt - start_dt).total_seconds() / 86400.0
+    if total_days > 14 or len(sat_names) > 4:
+        st.session_state.setdefault("future_fetch_errors", {})["Skyfield"] = "Using faster Pyorbital fallback for this future search range in deployment."
+        return predict_future_passes_pyorbital(sat_names, lat, lon, start_date_str, end_date_str, user_tol_km, min_elev_deg)
 
     ts = load.timescale()
     t0 = ts.from_datetime(start_dt)
     t1 = ts.from_datetime(end_dt)
-
     observer = wgs84.latlon(latitude_degrees=lat, longitude_degrees=lon)
     rows: List[Dict[str, Any]] = []
 
@@ -1160,7 +1169,8 @@ def predict_future_passes_skyfield(
 
         try:
             t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception:
+        except Exception as e:
+            st.session_state.setdefault("future_fetch_errors", {})[sat] = f"Skyfield event search failed: {e}"
             continue
 
         current_triplet = {}
@@ -1180,27 +1190,26 @@ def predict_future_passes_skyfield(
             tc = trip.get("culm")
             if tc is None:
                 continue
-
-            minutes = 3
-            step_s = 2
+            minutes = 2
+            step_s = 4
             dt_list = np.arange(-minutes * 60, minutes * 60 + 1, step_s)
             best = None
-
             for dt_s in dt_list:
                 tt_dt = tc.utc_datetime().replace(tzinfo=utc) + timedelta(seconds=int(dt_s))
                 tt = ts.from_datetime(tt_dt)
-                topocentric = (sat_obj - observer).at(tt)
-                alt, az, distance = topocentric.altaz()
+                try:
+                    topocentric = (sat_obj - observer).at(tt)
+                    alt, az, distance = topocentric.altaz()
+                except Exception:
+                    continue
                 elev_deg = float(alt.degrees)
                 if elev_deg <= min_elev_deg:
                     continue
-
                 sp = sat_obj.at(tt).subpoint()
                 slat = float(sp.latitude.degrees)
                 slon = float(sp.longitude.degrees)
                 alt_km = float(sp.elevation.km)
                 dist_km = great_circle_distance_km(slat, slon, float(lat), float(lon))
-
                 if best is None or dist_km < best["dist_km"]:
                     best = {
                         "time": tt.utc_datetime(),
@@ -1210,7 +1219,6 @@ def predict_future_passes_skyfield(
                         "dist_km": dist_km,
                         "elev_deg": elev_deg,
                     }
-
             if best is not None and best["dist_km"] <= eff_tol:
                 rows.append({
                     "time": best["time"],
@@ -1289,6 +1297,9 @@ def sno_metrics_by_pair_counts(df_sno: pd.DataFrame) -> pd.DataFrame:
     if df_sno is None or df_sno.empty:
         return pd.DataFrame()
     tmp = df_sno.copy()
+    tmp = tmp[~tmp.apply(lambda r: is_same_platform_variant(r.get("sat_a"), r.get("sat_b")), axis=1)].copy()
+    if tmp.empty:
+        return pd.DataFrame()
     tmp["pair"] = tmp["sat_a"].astype(str) + " ↔ " + tmp["sat_b"].astype(str)
     if "PAIR_FLAG" not in tmp.columns:
         tmp["PAIR_FLAG"] = "OK"
@@ -1576,7 +1587,7 @@ def main():
                 "Skyfield (more accurate)" if SKYFIELD_AVAILABLE else "Skyfield (install required)",
                 "Pyorbital (fallback)"
             ],
-            index=0 if SKYFIELD_AVAILABLE else 1,
+            index=1,
             help="Install Skyfield: pip install skyfield sgp4",
             key="future_engine"
         )
@@ -1633,11 +1644,11 @@ def main():
     if "runtime_s" in st.session_state:
         rt_txt = format_runtime(float(st.session_state["runtime_s"]))
         runtime_html = f"""
-        <div style="position: fixed; top: 12px; right: 14px; z-index: 9999;
+        <div style="position: fixed; top: 12px; right: 10px; z-index: 9999;
              background: rgba(11, 19, 32, 0.92);
-             padding: 10px 12px; border-radius: 12px;
+             padding: 6px 8px; border-radius: 10px;
              border: 1px solid #22304a;">
-          <span style="font-size: 18px; font-weight: 900; color: #ff3333;">
+          <span style="font-size: 12px; font-weight: 900; color: #ff4d4f;">
             Runtime: {rt_txt}
           </span>
         </div>
@@ -1717,11 +1728,10 @@ def main():
         if legend_items:
             lines = "".join([f"<div><span style='color:{c}; font-weight:900;'>★</span> {lab}</div>" for lab, c in legend_items])
             legend_html = f"""
-            <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
-              background: rgba(11,19,32,0.92); color: #f8f9fa;
-              padding: 10px; border: 1px solid #22304a; border-radius: 8px;
-              font-size: 12px; max-width: 300px;">
-              <b>Legend</b>
+            <div style="position: fixed; top: 58px; right: 10px; z-index: 9999;
+              background: rgba(11,19,32,0.88); color: #f8f9fa;
+              padding: 6px 8px; border: 1px solid #22304a; border-radius: 8px;
+              font-size: 10px; line-height: 1.25; max-width: 170px;">
               <div style="margin-top:6px;">{lines}</div>
               <div style="margin-top:8px;">
                 <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
@@ -1786,11 +1796,10 @@ def main():
         if legend_items:
             lines = "".join([f"<div><span style='color:{c}; font-weight:900;'>★</span> {lab}</div>" for lab, c in legend_items])
             legend_html = f"""
-            <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999;
-              background: rgba(11,19,32,0.92); color:#f8f9fa;
-              padding: 10px; border: 1px solid #22304a; border-radius: 8px;
-              font-size: 12px; max-width: 300px;">
-              <b>Legend</b>
+            <div style="position: fixed; top: 58px; right: 10px; z-index: 9999;
+              background: rgba(11,19,32,0.88); color:#f8f9fa;
+              padding: 6px 8px; border: 1px solid #22304a; border-radius: 8px;
+              font-size: 10px; line-height: 1.25; max-width: 170px;">
               <div style="margin-top:6px;">{lines}</div>
               <div style="margin-top:8px;">
                 <span style="display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%; margin-right:6px;"></span>
@@ -1803,38 +1812,34 @@ def main():
     folium.LayerControl().add_to(m)
      
     map_data = st_folium(
-    m,
-    height=450,
-    width="stretch",
-    key="site_map",
-    returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
-)
+        m,
+        height=450,
+        width="stretch",
+        key="site_map",
+        returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
+    )
 
-    if map_data:
-       if map_data.get("center"):
-           st.session_state["map_view_center"] = [
+    if map_data and map_data.get("center"):
+        st.session_state["map_view_center"] = [
             float(map_data["center"]["lat"]),
-            float(map_data["center"]["lng"]),]
-    if map_data.get("zoom") is not None:
+            float(map_data["center"]["lng"]),
+        ]
+    if map_data and map_data.get("zoom") is not None:
         st.session_state["map_view_zoom"] = int(map_data["zoom"])
 
-
     def request_map_update(new_lat: float, new_lon: float):
-    	this_click = (round(new_lat, 6), round(new_lon, 6))
-    	if st.session_state.get("_last_click") != this_click:
-           st.session_state["_last_click"] = this_click
-           st.session_state["map_lat"] = float(new_lat)
-           st.session_state["map_lon"] = float(new_lon)
-           st.session_state["map_view_center"] = [float(new_lat), float(new_lon)]
-           #st.rerun() 
+        this_click = (round(new_lat, 6), round(new_lon, 6))
+        if st.session_state.get("_last_click") != this_click:
+            st.session_state["_last_click"] = this_click
+            st.session_state["map_lat"] = float(new_lat)
+            st.session_state["map_lon"] = float(new_lon)
 
-
-     # Only background click will update site
+    # Only background click will update site
     if map_data and map_data.get("last_clicked") and not map_data.get("last_object_clicked"):
         request_map_update(
-        float(map_data["last_clicked"]["lat"]),
-        float(map_data["last_clicked"]["lng"]),
-    )
+            float(map_data["last_clicked"]["lat"]),
+            float(map_data["last_clicked"]["lng"]),
+        )
    
     # Draw/edit marker-to-set
     candidate = None
