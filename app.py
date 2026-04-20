@@ -1913,6 +1913,8 @@ def main():
                         st.session_state["future_df"] = df_pred_w
                         st.session_state["future_sno"] = df_sno_f
                         st.session_state["future_selected"] = list(selected_future)
+                        if st.session_state.get("future_pred_note"):
+                            st.info(f"Future prediction engine used: {st.session_state['future_pred_note']}")
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
