@@ -418,8 +418,8 @@ st.sidebar.text_input(
 )
 
 _submit_col, _reset_col = st.sidebar.columns(2)
-submit_project = _submit_col.button("Submit Project ID", type="primary", use_container_width=True)
-reset_inputs_top = _reset_col.button("Reset Inputs", use_container_width=True)
+submit_project = _submit_col.button("Submit Project ID", type="primary", use_container_width=True, key="submit_project_id_btn")
+reset_inputs_top = _reset_col.button("Reset Inputs", use_container_width=True, key="reset_inputs_top_btn")
 
 if submit_project:
     cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
@@ -1313,7 +1313,7 @@ def main():
 
     # Sidebar
     st.sidebar.header("Site & Period")
-    if st.sidebar.button("Reset Inputs", use_container_width=True):
+    if st.sidebar.button("Reset Inputs", use_container_width=True, key="reset_inputs_main_btn"):
         reset_app_inputs()
 
     site_choice = st.sidebar.selectbox(
