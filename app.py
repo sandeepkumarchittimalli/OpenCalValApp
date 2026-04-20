@@ -880,21 +880,22 @@ def fetch_tle_from_celestrak(norad_id: int) -> str:
     urls = [
         f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
         f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3le",
     ]
     headers = {"User-Agent": "Mozilla/5.0 OpenCalValPlan/1.0"}
-    last_error = None
+    errors = []
     for url in urls:
         try:
-            r = requests.get(url, timeout=20, headers=headers)
+            r = requests.get(url, timeout=(5, 8), headers=headers)
             r.raise_for_status()
-            tle_text = r.text.strip()
-            if tle_text.count("\n") >= 2 and "No GP data found" not in tle_text:
-                return tle_text
-            last_error = ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text[:200]}")
+            tle_text = (r.text or "").strip()
+            lines = [ln.strip() for ln in tle_text.splitlines() if ln.strip()]
+            if len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
+                return "\n".join(lines[:3])
+            errors.append(f"{url} -> unexpected response: {tle_text[:120]}")
         except Exception as e:
-            last_error = e
-            continue
-    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}: {last_error}")
+            errors.append(f"{url} -> {e}")
+    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}. " + " | ".join(errors[-3:]))
 
 
 @st.cache_resource(show_spinner=False)
@@ -1176,30 +1177,24 @@ def predict_future_passes_with_fallbacks(
     min_elev_deg: float,
     prefer_skyfield: bool,
 ) -> Tuple[pd.DataFrame, str]:
-    attempts = []
-    if prefer_skyfield and SKYFIELD_AVAILABLE:
-        attempts = [
-            ("skyfield", float(min_elev_deg)),
-            ("pyorbital", float(min_elev_deg)),
-            ("pyorbital-next", float(min_elev_deg)),
-            ("pyorbital", 0.0),
-            ("pyorbital-next", 0.0),
-            ("skyfield", 0.0),
-        ]
+    # Keep cloud execution bounded: try a small number of paths in a sensible order.
+    primary = "skyfield" if (prefer_skyfield and SKYFIELD_AVAILABLE) else "pyorbital-next"
+    attempts: List[Tuple[str, float]] = []
+    if primary == "skyfield":
+        attempts.extend([("skyfield", float(min_elev_deg)), ("pyorbital-next", float(min_elev_deg)), ("pyorbital", float(min_elev_deg))])
     else:
-        attempts = [
-            ("pyorbital", float(min_elev_deg)),
-            ("pyorbital-next", float(min_elev_deg)),
-            ("skyfield", float(min_elev_deg)),
-            ("pyorbital", 0.0),
-            ("pyorbital-next", 0.0),
-            ("skyfield", 0.0),
-        ]
+        attempts.extend([("pyorbital-next", float(min_elev_deg)), ("pyorbital", float(min_elev_deg))])
+        if SKYFIELD_AVAILABLE:
+            attempts.append(("skyfield", float(min_elev_deg)))
 
-    last_note = ""
+    if float(min_elev_deg) > 0:
+        attempts.append((primary, 0.0))
+
+    diagnostics: List[str] = []
     for engine_name, elev_try in attempts:
         if engine_name == "skyfield" and not SKYFIELD_AVAILABLE:
             continue
+        t0 = time.perf_counter()
         try:
             if engine_name == "skyfield":
                 df_pred = predict_future_passes_skyfield(
@@ -1220,16 +1215,18 @@ def predict_future_passes_with_fallbacks(
                     user_tol_km=float(user_tol_km), min_elev_deg=float(elev_try),
                 )
         except Exception as e:
-            last_note = f"{engine_name} failed: {e}"
+            diagnostics.append(f"{engine_name}@{elev_try:.1f}° failed in {time.perf_counter()-t0:.1f}s: {e}")
             continue
 
+        elapsed = time.perf_counter() - t0
         if not df_pred.empty:
-            note = engine_name if elev_try > 0 else f"{engine_name} (relaxed elevation=0°)"
-            return df_pred, note
+            label = engine_name if elev_try > 0 else f"{engine_name} (relaxed elevation=0°)"
+            diagnostics.append(f"{label} returned {len(df_pred)} passes in {elapsed:.1f}s")
+            return df_pred, " | ".join(diagnostics[-3:])
 
-        last_note = f"No passes from {engine_name} with min elevation {elev_try:.1f}°"
+        diagnostics.append(f"{engine_name}@{elev_try:.1f}° returned 0 passes in {elapsed:.1f}s")
 
-    return pd.DataFrame(), last_note
+    return pd.DataFrame(), " | ".join(diagnostics[-4:])
 
 
 @st.cache_data(show_spinner=True)
@@ -2062,7 +2059,7 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        msg = "No visible passes found within tolerance. Try increasing tolerance/date window."
+                        msg = "No visible future passes found. Try increasing tolerance/date window or check diagnostics below."
                         note = st.session_state.get("future_pred_note", "")
                         if note:
                             msg += f" Diagnostics: {note}"
@@ -2207,5 +2204,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
