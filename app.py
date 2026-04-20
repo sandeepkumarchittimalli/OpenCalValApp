@@ -265,8 +265,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_4",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "LANDSAT 5 TM": PastMission(
         key="LANDSAT 5 TM", label="Landsat 5 (TM)",
@@ -274,8 +273,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_5",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "LANDSAT 7": PastMission(
         key="LANDSAT 7", label="Landsat 7 (ETM+) (decommissioned, past data exists)",
@@ -283,8 +281,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_7",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "LANDSAT 8": PastMission(
         key="LANDSAT 8", label="Landsat 8 (OLI)",
@@ -292,8 +289,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_8",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "LANDSAT 9": PastMission(
         key="LANDSAT 9", label="Landsat 9 (OLI-2)",
@@ -301,8 +297,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="LANDSAT_PRODUCT_ID", cloud_prop="CLOUD_COVER",
         sun_az_prop="SUN_AZIMUTH", sun_zen_prop=None,
         spacecraft_prop="SPACECRAFT_ID", spacecraft_values=("LANDSAT_9",),
-        sample_scale_m=30, sample_bands=("B2", "B3", "B4", "B5"),
-        sample_band_scales=(1.0, 1.0, 1.0, 1.0)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
 
     # Sentinel-2 TOA
@@ -312,8 +307,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2A",),
-        sample_scale_m=10, sample_bands=("B2", "B3", "B4", "B8"),
-        sample_band_scales=(S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "SENTINEL-2B": PastMission(
         key="SENTINEL-2B", label="Sentinel-2B",
@@ -321,8 +315,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop="PRODUCT_ID", cloud_prop="CLOUDY_PIXEL_PERCENTAGE",
         sun_az_prop="MEAN_SOLAR_AZIMUTH_ANGLE", sun_zen_prop="MEAN_SOLAR_ZENITH_ANGLE",
         spacecraft_prop="SPACECRAFT_NAME", spacecraft_values=("Sentinel-2B",),
-        sample_scale_m=10, sample_bands=("B2", "B3", "B4", "B8"),
-        sample_band_scales=(S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE, S2_TOA_SCALE)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
 
     # MODIS
@@ -332,8 +325,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop=None, cloud_prop=None,
         sun_az_prop=None, sun_zen_prop=None,
         spacecraft_prop=None, spacecraft_values=None,
-        sample_scale_m=250, sample_bands=("sur_refl_b01", "sur_refl_b02"),
-        sample_band_scales=(0.0001, 0.0001)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
     "AQUA (MODIS)": PastMission(
         key="AQUA (MODIS)", label="Aqua MODIS SR (daily, 250m)",
@@ -341,8 +333,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop=None, cloud_prop=None,
         sun_az_prop=None, sun_zen_prop=None,
         spacecraft_prop=None, spacecraft_values=None,
-        sample_scale_m=250, sample_bands=("sur_refl_b01", "sur_refl_b02"),
-        sample_band_scales=(0.0001, 0.0001)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
 
     # VIIRS
@@ -352,8 +343,7 @@ PAST_MISSIONS: Dict[str, PastMission] = {
         id_prop=None, cloud_prop=None,
         sun_az_prop=None, sun_zen_prop=None,
         spacecraft_prop=None, spacecraft_values=None,
-        sample_scale_m=500, sample_bands=("I1", "I2"),
-        sample_band_scales=(0.0001, 0.0001)
+        sample_scale_m=None, sample_bands=None, sample_band_scales=None
     ),
 }
 
@@ -416,25 +406,56 @@ st.sidebar.success("Google account connected ✅")
 
 if "latest_projectid" not in st.session_state:
     st.session_state["latest_projectid"] = ""
+if "project_id_draft" not in st.session_state:
+    st.session_state["project_id_draft"] = st.session_state["latest_projectid"]
+if "project_submitted" not in st.session_state:
+    st.session_state["project_submitted"] = bool(st.session_state["latest_projectid"])
 
 st.sidebar.text_input(
     "Enter your GEE Project ID",
-    value=st.session_state["latest_projectid"],
     help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-    key="gee_project_id_input",
+    key="project_id_draft",
 )
 
-latest_projectid = st.session_state.get("gee_project_id_input", "").strip()
-st.session_state["latest_projectid"] = latest_projectid
-project_id = latest_projectid
+_submit_col, _reset_col = st.sidebar.columns(2)
+submit_project = _submit_col.button("Submit Project ID", type="primary", use_container_width=True)
+reset_inputs_top = _reset_col.button("Reset Inputs", use_container_width=True)
 
-if not latest_projectid:
-    st.sidebar.info("Enter your Google Earth Engine Project ID to continue.")
+if submit_project:
+    cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
+    if cleaned_project_id:
+        st.session_state["latest_projectid"] = cleaned_project_id
+        st.session_state["project_submitted"] = True
+        st.cache_resource.clear()
+        st.rerun()
+    else:
+        st.session_state["project_submitted"] = False
+        st.sidebar.warning("Please enter a valid GEE Project ID.")
+        st.stop()
+
+if reset_inputs_top:
+    google_tokens = st.session_state.get("google_tokens")
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    if google_tokens:
+        st.session_state["google_tokens"] = google_tokens
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
+
+if not st.session_state["project_submitted"]:
+    st.sidebar.info("Enter your GEE Project ID and click Submit Project ID.")
+    st.stop()
+
+project_id = st.session_state.get("latest_projectid", "").strip()
+
+if not project_id:
+    st.sidebar.info("Enter your GEE Project ID and click Submit Project ID.")
     st.stop()
 
 try:
-    ee_status = init_ee(latest_projectid)
-    st.sidebar.success(f"GEE initialized successfully ✅ ({latest_projectid})")
+    ee_status = init_ee(project_id)
+    st.sidebar.success(f"GEE initialized successfully ✅ ({project_id})")
 except Exception as e:
     st.sidebar.error("GEE initialization failed ❌")
     st.sidebar.write(str(e))
@@ -690,7 +711,6 @@ def gee_past_acquisitions(
     end_date: str,
     selected_missions: Tuple[str, ...],
     site_buffer_m: float,
-    sample_reflectance: bool,
     max_results_per_collection: int = 5000,  # avoid EE abort
 ) -> pd.DataFrame:
     init_ee(project_id)
@@ -869,13 +889,24 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
 # ------------------- FUTURE (TLE) -------------------
 
 def fetch_tle_from_celestrak(norad_id: int) -> str:
-    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    tle_text = r.text.strip()
-    if tle_text.count("\n") < 2:
-        raise ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text}")
-    return tle_text
+    urls = [
+        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+        f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
+    ]
+    headers = {"User-Agent": "Mozilla/5.0 OpenCalValPlan/1.0"}
+    last_error = None
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=20, headers=headers)
+            r.raise_for_status()
+            tle_text = r.text.strip()
+            if tle_text.count("\n") >= 2 and "No GP data found" not in tle_text:
+                return tle_text
+            last_error = ValueError(f"Unexpected TLE for NORAD {norad_id}: {tle_text[:200]}")
+        except Exception as e:
+            last_error = e
+            continue
+    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}: {last_error}")
 
 
 @st.cache_resource(show_spinner=False)
@@ -953,7 +984,7 @@ def predict_future_passes_pyorbital(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float,
+    min_elev_deg: float
 ) -> pd.DataFrame:
     start_time = datetime.strptime(start_date_str + "-00-00-00", "%Y-%m-%d-%H-%M-%S")
     end_time = datetime.strptime(end_date_str + "-23-59-30", "%Y-%m-%d-%H-%M-%S")
@@ -1060,7 +1091,7 @@ def predict_future_passes_skyfield(
     start_date_str: str,
     end_date_str: str,
     user_tol_km: float,
-    min_elev_deg: float,
+    min_elev_deg: float
 ) -> pd.DataFrame:
     if not SKYFIELD_AVAILABLE:
         return pd.DataFrame()
@@ -1452,7 +1483,6 @@ def main():
         help="Past acquisitions counted if image footprint intersects this buffer around the point.",
         key="site_buffer_m"
     )
-    sample_reflectance = False
 
     if st.session_state["mode"] == "Future pass planning":
         overpass_tol_km = st.sidebar.slider(
@@ -1791,7 +1821,6 @@ def main():
                             start_date=start_date_str, end_date=end_date_str,
                             selected_missions=tuple(selected_past),
                             site_buffer_m=float(site_buffer_m),
-                            sample_reflectance=False,
                         )
 
                     if df_events.empty:
