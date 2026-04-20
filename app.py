@@ -417,7 +417,7 @@ if "google_tokens" not in st.session_state:
         text-align: center;
         font-weight: 500;
     ">
-        🔐 Sign in with Google Earth Engine
+        🔐 Connect Google Earth Engine to continue
     </div>
     """,
     unsafe_allow_html=True
