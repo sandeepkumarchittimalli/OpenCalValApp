@@ -1421,6 +1421,50 @@ def sno_metrics_by_pair_counts(df_sno: pd.DataFrame) -> pd.DataFrame:
 
 # ------------------- TIME SERIES -------------------
 
+
+def reset_app_inputs():
+    """Reset user-adjustable app inputs while keeping auth/project state."""
+    today = datetime.utcnow().date()
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
+    # Clear computed outputs and transient map/click state
+    keys_to_remove = [
+        "past_df_raw", "past_df", "past_sno",
+        "future_df_raw", "future_df", "future_sno",
+        "runtime_s", "run_start_time",
+        "_last_click", "map_lat", "map_lon",
+        "future_diag", "future_engine_used",
+    ]
+    for k in keys_to_remove:
+        st.session_state.pop(k, None)
+
+    # Reset controls to app defaults
+    st.session_state["lat"] = float(DEFAULT_LAT)
+    st.session_state["lon"] = float(DEFAULT_LON)
+    st.session_state["lat_input"] = float(DEFAULT_LAT)
+    st.session_state["lon_input"] = float(DEFAULT_LON)
+    st.session_state["site_choice"] = "Crater Lake (OR)"
+    st.session_state["_site_choice_applied"] = "Crater Lake (OR)"
+    st.session_state["mode"] = "Past acquisitions"
+    st.session_state["mode_choice"] = "Past acquisitions"
+    st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
+    st.session_state["date_range_widget"] = (today - timedelta(days=90), yesterday)
+    st.session_state["selected_past"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
+    st.session_state["selected_future"] = ["LANDSAT 8", "LANDSAT 9", "SENTINEL-2A", "SENTINEL-2B"]
+    st.session_state["site_buffer_m"] = int(DEFAULT_SITE_BUFFER_M)
+    st.session_state["overpass_tol_km"] = float(DEFAULT_OVERPASS_TOL_KM)
+    st.session_state["min_elev_deg"] = float(MIN_ELEV_DEG_DEFAULT)
+    st.session_state["future_engine"] = "Skyfield (more accurate)" if SKYFIELD_AVAILABLE else "Pyorbital (fallback)"
+    st.session_state["sno_window_choice"] = "30 min"
+    st.session_state["sno_window_min"] = 30.0
+    st.session_state["sno_window_custom"] = 60
+    st.session_state["map_view_center"] = [float(DEFAULT_LAT), float(DEFAULT_LON)]
+    st.session_state["map_view_zoom"] = 7
+
+    st.cache_data.clear()
+    st.rerun()
+
 def main():
 
     # Canonical state
@@ -1462,8 +1506,6 @@ def main():
 
     # Sidebar
     st.sidebar.header("Site & Period")
-    if st.sidebar.button("Reset Inputs", use_container_width=True, key="reset_inputs_main_btn"):
-        reset_app_inputs()
 
     site_choice = st.sidebar.selectbox(
         "Quick test sites",
@@ -1662,6 +1704,10 @@ def main():
         overpass_tol_km = float(DEFAULT_OVERPASS_TOL_KM)
         min_elev_deg = float(MIN_ELEV_DEG_DEFAULT)
         future_engine = "Pyorbital (fallback)"
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Reset Inputs", use_container_width=True, key="reset_inputs_main_btn"):
+        reset_app_inputs()
 
     # -------------------- MAP (TOP) --------------------
     st.subheader("Select site on map (results overlay appears here after Compute)")
