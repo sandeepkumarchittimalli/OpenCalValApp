@@ -426,20 +426,26 @@ if "project_submitted" not in st.session_state:
     st.session_state["project_submitted"] = False
 if "submitted_project_id" not in st.session_state:
     st.session_state["submitted_project_id"] = ""
+if "project_id_draft" not in st.session_state:
+    st.session_state["project_id_draft"] = st.session_state["submitted_project_id"]
 
-with st.sidebar.form("gee_project_form"):
-    project_id_input = st.text_input(
-        "Enter your GEE Project ID",
-        value=st.session_state["submitted_project_id"],
-        help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-        key="project_id_input",
-    )
-    submit_project = st.form_submit_button("Submit Project ID")
+st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+    key="project_id_draft",
+)
+submit_project = st.sidebar.button("Submit Project ID", type="primary")
 
 if submit_project:
-    cleaned_project_id = project_id_input.strip()
-    st.session_state["submitted_project_id"] = cleaned_project_id
-    st.session_state["project_submitted"] = bool(cleaned_project_id)
+    cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
+    if cleaned_project_id:
+        st.session_state["submitted_project_id"] = cleaned_project_id
+        st.session_state["project_submitted"] = True
+        st.rerun()
+    else:
+        st.session_state["project_submitted"] = False
+        st.sidebar.warning("Please enter a valid GEE Project ID.")
+        st.stop()
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE project ID and click Submit Project ID.")
@@ -451,7 +457,7 @@ if not project_id:
     st.stop()
 
 if st.sidebar.button("Reset Inputs"):
-    keys_to_keep = {"google_tokens"}
+    keys_to_keep = {"google_tokens", "submitted_project_id", "project_submitted", "project_id_draft"}
     for k in list(st.session_state.keys()):
         if k not in keys_to_keep:
             del st.session_state[k]
@@ -856,6 +862,10 @@ def compute_snos_allpairs(df_events: pd.DataFrame, sno_window_minutes: float) ->
         for j in range(i + 1, right):
             if df.loc[i, "sat_name"] == df.loc[j, "sat_name"]:
                 continue
+            if _is_same_platform_variant_pair(df.loc[i, "sat_name"], df.loc[j, "sat_name"]):
+                continue
+            if _is_same_platform_variant_pair(df.loc[i, "sat_name"], df.loc[j, "sat_name"]):
+                continue
             if is_same_platform_variant(df.loc[i, "sat_name"], df.loc[j, "sat_name"]):
                 continue
             dt_min = float((times[j] - t) / np.timedelta64(1, "m"))
@@ -993,6 +1003,15 @@ def _default_half_swath_km(sat_name: str) -> Optional[float]:
         return 1520.0
     return None
 
+
+
+
+def _is_same_platform_variant_pair(a: str, b: str) -> bool:
+    pair = {str(a).upper(), str(b).upper()}
+    return pair in [
+        {"LANDSAT 4 MSS", "LANDSAT 4 TM"},
+        {"LANDSAT 5 MSS", "LANDSAT 5 TM"},
+    ]
 
 def _refine_minimum_distance_pyorbital(
     orb: Orbital,
@@ -1558,13 +1577,7 @@ def main():
         help="Past acquisitions counted if image footprint intersects this buffer around the point.",
         key="site_buffer_m"
     )
-
-    sample_reflectance = st.sidebar.checkbox(
-        "Also sample reflectance at site (slower)",
-        value=False,
-        help="Enables time series tabs (when those missions support reflectance sampling).",
-        key="sample_reflectance"
-    )
+    sample_reflectance = False
 
     if st.session_state["mode"] == "Future pass planning":
         overpass_tol_km = st.sidebar.slider(
@@ -1581,16 +1594,7 @@ def main():
             step=1.0,
             key="min_elev_deg"
         )
-        future_engine = st.sidebar.radio(
-            "Future engine",
-            options=[
-                "Skyfield (more accurate)" if SKYFIELD_AVAILABLE else "Skyfield (install required)",
-                "Pyorbital (fallback)"
-            ],
-            index=1,
-            help="Install Skyfield: pip install skyfield sgp4",
-            key="future_engine"
-        )
+        future_engine = "Pyorbital (fallback)"
     else:
         overpass_tol_km = float(DEFAULT_OVERPASS_TOL_KM)
         min_elev_deg = float(MIN_ELEV_DEG_DEFAULT)
@@ -1739,7 +1743,7 @@ def main():
               </div>
             </div>
             """
-            m.get_root().html.add_child(folium.Element(legend_html))
+            pass  # legend handled globally on map
 
     # ---- Overlay Future Results ----
     if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
@@ -1807,13 +1811,13 @@ def main():
               </div>
             </div>
             """
-            m.get_root().html.add_child(folium.Element(legend_html))
+            pass  # legend handled globally on map
 
     folium.LayerControl().add_to(m)
      
     map_data = st_folium(
         m,
-        height=450,
+        height=520,
         width="stretch",
         key="site_map",
         returned_objects=["last_clicked", "last_object_clicked", "center", "zoom", "last_active_drawing", "last_drawn", "all_drawings"],
@@ -1919,7 +1923,7 @@ def main():
                 else:
                     st.session_state["future_fetch_errors"] = {}
                     with st.spinner("Predicting future passes..."):
-                        use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
+                        use_skyfield = False
                         if use_skyfield:
                             df_pred = predict_future_passes_skyfield(
                                 sat_names=tuple(selected_future),
