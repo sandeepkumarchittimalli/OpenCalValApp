@@ -402,7 +402,7 @@ st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine p
 
 st.sidebar.markdown("---")
 
-with st.sidebar.expander("🔐 Privacy & Usage Notice (click to expand)", expanded=False):
+with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
     st.markdown(
         """
 - Uses your Google account **only for Earth Engine authentication**
