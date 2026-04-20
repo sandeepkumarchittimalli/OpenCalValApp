@@ -499,7 +499,7 @@ def mission_hex_color(mission_key: str) -> str:
 
 def normalize_time_to_sec(t: Any) -> pd.Timestamp:
     ts = pd.to_datetime(t, utc=False)
-    return ts.floor("S")
+    return ts.floor("s")
 
 
 def format_runtime(seconds: float) -> str:
@@ -839,11 +839,11 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
         return out
 
     ev = df_events_w.copy()
-    ev["time"] = pd.to_datetime(ev["time"]).dt.floor("S")
+    ev["time"] = pd.to_datetime(ev["time"]).dt.floor("s")
     ev = ev[["sat_name", "time", "scene_id", "collection", "cloud_scene_pct"]].copy()
 
-    out["time_a"] = pd.to_datetime(out["time_a"]).dt.floor("S")
-    out["time_b"] = pd.to_datetime(out["time_b"]).dt.floor("S")
+    out["time_a"] = pd.to_datetime(out["time_a"]).dt.floor("s")
+    out["time_b"] = pd.to_datetime(out["time_b"]).dt.floor("s")
 
     out = out.merge(
         ev.rename(columns={"sat_name": "sat_a", "time": "time_a", "scene_id": "scene_a", "collection": "collection_a", "cloud_scene_pct": "cloud_a"}),
@@ -1238,6 +1238,35 @@ def predict_future_passes_skyfield(
     df = pd.DataFrame(rows)
     df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
     return df.sort_values(["sat_name", "time"]).reset_index(drop=True)
+
+def compute_future_snos(df_pred: pd.DataFrame, sno_window_minutes: float) -> pd.DataFrame:
+    if df_pred is None or df_pred.empty:
+        return pd.DataFrame()
+
+    df = df_pred.copy()
+    df["time"] = pd.to_datetime(df["time"]).apply(normalize_time_to_sec)
+    df = df.sort_values("time").reset_index(drop=True)
+
+    times = df["time"].to_numpy(dtype="datetime64[ns]")
+    tol = np.timedelta64(int(float(sno_window_minutes) * 60), "s")
+
+    out = []
+    for i, t in enumerate(times):
+        right = np.searchsorted(times, t + tol, side="right")
+        for j in range(i + 1, right):
+            if df.loc[i, "sat_name"] == df.loc[j, "sat_name"]:
+                continue
+            dt_min = float((times[j] - t) / np.timedelta64(1, "m"))
+            out.append({
+                "sat_a": df.loc[i, "sat_name"],
+                "time_a": df.loc[i, "time"],
+                "sat_b": df.loc[j, "sat_name"],
+                "time_b": df.loc[j, "time"],
+                "dt_minutes": abs(dt_min),
+            })
+
+    return (pd.DataFrame(out).sort_values("dt_minutes").reset_index(drop=True)) if out else pd.DataFrame()
+
 # ------------------- METRICS -------------------
 
 def acquisition_metrics(df: pd.DataFrame, sat_col: str = "sat_name") -> pd.DataFrame:
