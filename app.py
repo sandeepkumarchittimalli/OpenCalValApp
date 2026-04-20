@@ -400,10 +400,14 @@ finish_oauth_if_needed()
 st.sidebar.header("Google Earth Engine Login")
 st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
 
-st.sidebar.markdown("---")
 
+st.sidebar.markdown(
+    "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
+)
+
+st.sidebar.markdown("---")
 with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
-    st.markdown(
+    st.markdown( 
         """
 - Uses your Google account **only for Earth Engine authentication**
 - No personal data is stored, shared, or retained
@@ -411,10 +415,6 @@ with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
 - Do **not** enter sensitive or personal information
 """
     )
-
-st.sidebar.markdown(
-    "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
-)
 
 if "google_tokens" not in st.session_state:
     #st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
