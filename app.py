@@ -413,11 +413,7 @@ if "google_tokens" not in st.session_state:
     OAUTH_BACKEND_START,
     use_container_width=True)
     st.sidebar.caption("Secure Google authentication")
-    #st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
-    st.sidebar.warning("Connect your Google account first.")
-    st.stop()
-
-st.sidebar.markdown("---")
+    st.sidebar.markdown("---")
 with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
     st.markdown( 
         """
@@ -427,6 +423,10 @@ with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
 - Do **not** enter sensitive or personal information
 """
     )
+    #st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
+    st.sidebar.warning("Connect your Google account first.")
+    st.stop()
+
 st.sidebar.success("Google account connected ✅")
 
 if "latest_projectid" not in st.session_state:
