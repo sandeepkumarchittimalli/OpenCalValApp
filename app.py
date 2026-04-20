@@ -399,15 +399,19 @@ finish_oauth_if_needed()
 
 st.sidebar.header("Google Earth Engine Login")
 st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
-st.sidebar.info(
-    """
-Privacy & usage notice:
-- This app uses your Google account only to access Google Earth Engine.
-- Do not provide personal, sensitive, or confidential information.
-- Use your own Earth Engine project ID and only projects you are authorized to use.
-- Avoid sharing screenshots or logs containing tokens, project IDs, or account details.
-    """
-)
+
+st.sidebar.markdown("---")
+
+with st.sidebar.expander("🔐 Privacy & Usage Notice (click to expand)", expanded=False):
+    st.markdown(
+        """
+- Uses your Google account **only for Earth Engine authentication**
+- No personal data is stored, shared, or retained
+- Only your **GEE Project ID and credentials** are used
+- Do **not** enter sensitive or personal information
+"""
+    )
+
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
