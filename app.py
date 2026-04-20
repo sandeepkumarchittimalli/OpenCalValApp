@@ -424,15 +424,15 @@ if "google_tokens" not in st.session_state:
 )
 
     st.sidebar.link_button(
-    "🚀 Connect",
+    "🔑 Sign in with Google Earth Engine",
     OAUTH_BACKEND_START,
     use_container_width=True
     )
     #st.sidebar.link_button("Connect Google Earth Engine", OAUTH_BACKEND_START)
-    st.sidebar.link_button(
-    "🔐 Sign in with Google Earth Engine",
-    OAUTH_BACKEND_START,
-    use_container_width=True)
+    #st.sidebar.link_button(
+    #"🔐 Sign in with Google Earth Engine",
+    #OAUTH_BACKEND_START,
+    #use_container_width=True)
     st.sidebar.caption("Secure Google authentication")
 with st.sidebar.expander("**Privacy & Usage Notice** ", expanded=False):
     st.markdown( 
