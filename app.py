@@ -1,16 +1,22 @@
-#############################################
-# app.py 
-#
-# Features:
-# - Map at TOP (before tabs)
-# - Persist map view (center+zoom) so zoom/pan/cluster clicks don't reset
-# - Only rerun on true "background click" to set site (not cluster/marker clicks)
-# - Robust centroid extraction for MODIS/VIIRS (fixes List.get empty)
-# - MarkerCluster so all stars are visible (no overlap hiding)
-# - SNO rings drawn by exact lookup (sat,time,scene_id,collection) => no mismatch
-# - Runtime shown total and preserved after compute
-# - Metrics tab: acquisitfion/pass counts (GOOD/OK/BAD) + SNO pair counts (GOOD/OK/BAD)
-#############################################
+"""
+app.py
+OpenCalValPlan: Multi-Sensor Calibration, Validation, and SNO Planning Tool
+
+Author: Sandeep Kumar Chittimalli
+
+Description:
+- Computes past satellite acquisitions using Google Earth Engine (GEE)
+- Predicts future satellite passes using TLE + SGP4 (Pyorbital / Skyfield)
+- Identifies Simultaneous Nadir Overpasses (SNOs) based on time proximity
+- Integrates weather data (Open-Meteo API) for quality assessment
+
+Key Features:
+- Past acquisitions (GEE-based, footprint intersection)
+- Future pass prediction (orbit propagation)
+- SNO pairing (time-window based)
+- Weather-based quality classification (cloud, precipitation)
+
+"""
 
 from __future__ import annotations
 
@@ -393,6 +399,15 @@ finish_oauth_if_needed()
 
 st.sidebar.header("Google Earth Engine Login")
 st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
+st.sidebar.info(
+    """
+Privacy & usage notice:
+- This app uses your Google account only to access Google Earth Engine.
+- Do not provide personal, sensitive, or confidential information.
+- Use your own Earth Engine project ID and only projects you are authorized to use.
+- Avoid sharing screenshots or logs containing tokens, project IDs, or account details.
+    """
+)
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
 )
@@ -1523,6 +1538,38 @@ def main():
         )
         selected_past = []
 
+    date_span_days = max(1, (end_date - start_date).days + 1)
+
+    high_frequency_sats = {"TERRA (MODIS)", "AQUA (MODIS)", "SUOMI NPP (VIIRS)"}
+    if st.session_state["mode"] == "Past acquisitions":
+        high_freq_selected = [s for s in selected_past if s in high_frequency_sats]
+        if high_freq_selected:
+            msg = (
+                "High-frequency satellites selected (MODIS/VIIRS): "
+                + ", ".join(high_freq_selected)
+                + ". These satellites can generate large datasets. "
+                  "Large date ranges may slow or fail GEE queries. "
+                  "SNO results also depend strongly on time window and satellite pairing."
+            )
+            if date_span_days >= 14:
+                msg += f" Current window: {date_span_days} days. Consider using a shorter date range."
+            st.sidebar.warning(msg)
+        selected_future = []
+    else:
+        high_freq_selected = [s for s in selected_future if s in high_frequency_sats]
+        if high_freq_selected:
+            msg = (
+                "High-frequency satellites selected (MODIS/VIIRS): "
+                + ", ".join(high_freq_selected)
+                + ". These satellites can produce many future passes. "
+                  "Large time windows may increase computation time. "
+                  "SNO results also depend strongly on time window and satellite pairing."
+            )
+            if date_span_days >= 30:
+                msg += f" Current window: {date_span_days} days. Consider using a shorter date range."
+            st.sidebar.warning(msg)
+        selected_past = []
+
     st.sidebar.write("### Settings")
 
     # SNO window selector (minutes to multi-day)
@@ -2111,7 +2158,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
