@@ -1932,7 +1932,7 @@ def main():
     runtime_s = st.session_state.get("runtime_s")
     if runtime_s is not None:
 
-    selected_for_legend = selected_past if st.session_state["mode"] == "Past acquisitions" else selected_future
+    	selected_for_legend = selected_past if st.session_state["mode"] == "Past acquisitions" else selected_future
     if selected_for_legend:
         legend_text = " | ".join([f"★ {s}" for s in selected_for_legend])
 
