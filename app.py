@@ -1305,7 +1305,7 @@ def main():
 
     # GEE init
     try:
-        mode_gee = init_ee(gee_project_id)
+        mode_gee = init_ee(project_id)
         st.caption(f"Earth Engine initialized using: {mode_gee}")
     except Exception as e:
         st.error(str(e))
