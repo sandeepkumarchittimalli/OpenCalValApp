@@ -413,8 +413,7 @@ if "google_tokens" not in st.session_state:
     OAUTH_BACKEND_START,
     use_container_width=True)
     st.sidebar.caption("Secure Google authentication")
-    st.sidebar.markdown("---")
-with st.sidebar.expander("🔐 Privacy & Usage Notice ", expanded=False):
+with st.sidebar.expander("**Privacy & Usage Notice** ", expanded=False):
     st.markdown( 
         """
 - Uses your Google account **only for Earth Engine authentication**
