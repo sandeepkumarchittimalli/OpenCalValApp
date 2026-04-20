@@ -2,8 +2,6 @@
 # app.py 
 #
 
-#############################################
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -386,35 +384,51 @@ if "gee_submitted" not in st.session_state:
     st.session_state["gee_submitted"] = False
 if "latest_projectid" not in st.session_state:
     st.session_state["latest_projectid"] = ""
+if "gee_project_id_input" not in st.session_state:
+    st.session_state["gee_project_id_input"] = st.session_state["latest_projectid"]
 
-with st.sidebar.form("gee_form"):
-    gee_project_id = st.text_input(
-        "Enter your GEE Project ID",
-        value=st.session_state["latest_projectid"],
-        help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
-        key="gee_project_id_input",
-    )
-    submitted = st.form_submit_button("Submit")
+st.sidebar.text_input(
+    "Enter your GEE Project ID",
+    help="Provide your own Google Earth Engine Project ID (e.g., my-project-123)",
+    key="gee_project_id_input",
+)
 
-if submitted:
-    st.session_state["latest_projectid"] = gee_project_id.strip()
-    st.session_state["gee_submitted"] = True
+col_apply, col_change = st.sidebar.columns(2)
+with col_apply:
+    apply_project = st.button("Submit", type="primary", use_container_width=True)
+with col_change:
+    change_project = st.button("Change", use_container_width=True)
+
+if apply_project:
+    cleaned_project_id = st.session_state.get("gee_project_id_input", "").strip()
+    if cleaned_project_id:
+        st.session_state["latest_projectid"] = cleaned_project_id
+        st.session_state["gee_submitted"] = True
+        st.cache_resource.clear()
+        st.rerun()
+    else:
+        st.session_state["gee_submitted"] = False
+        st.sidebar.warning("Please enter a valid GEE Project ID.")
+        st.stop()
+
+if change_project:
+    st.session_state["gee_submitted"] = False
+    st.session_state["latest_projectid"] = ""
+    st.session_state["gee_project_id_input"] = ""
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
 
 if not st.session_state["gee_submitted"]:
+    st.sidebar.info("Enter your project ID and click Submit once.")
     st.stop()
 
-latest_projectid = st.session_state["latest_projectid"]
+latest_projectid = st.session_state["latest_projectid"].strip()
 project_id = latest_projectid
 
 if not latest_projectid:
     st.sidebar.warning("Please enter a valid GEE Project ID.")
     st.stop()
-
-if st.sidebar.button("Change Project ID"):
-    st.session_state["gee_submitted"] = False
-    st.session_state["latest_projectid"] = ""
-    st.cache_resource.clear()
-    st.rerun()
 
 try:
     ee_status = init_ee(latest_projectid)
@@ -1223,6 +1237,21 @@ def sno_metrics_by_pair_counts(df_sno: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def reset_app_inputs():
+    keep_keys = {
+        "google_tokens",
+        "gee_submitted",
+        "latest_projectid",
+        "gee_project_id_input",
+    }
+    for key in list(st.session_state.keys()):
+        if key not in keep_keys:
+            del st.session_state[key]
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
+
+
 def main():
 
     # Canonical state
@@ -1264,6 +1293,8 @@ def main():
 
     # Sidebar
     st.sidebar.header("Site & Period")
+    if st.sidebar.button("Reset Inputs", use_container_width=True):
+        reset_app_inputs()
 
     site_choice = st.sidebar.selectbox(
         "Quick test sites",
@@ -1451,11 +1482,11 @@ def main():
         future_engine = st.sidebar.radio(
             "Future engine",
             options=[
-                "Skyfield (more accurate)" if SKYFIELD_AVAILABLE else "Skyfield (install required)",
-                "Pyorbital (fallback)"
+                "Pyorbital (same as working local behavior)",
+                "Skyfield (optional)" if SKYFIELD_AVAILABLE else "Skyfield (install required)",
             ],
-            index=0 if SKYFIELD_AVAILABLE else 1,
-            help="Install Skyfield: pip install skyfield sgp4",
+            index=0,
+            help="Default is Pyorbital to match the working local app. Skyfield is optional.",
             key="future_engine"
         )
     else:
@@ -1728,6 +1759,23 @@ def main():
                 request_map_update(float(coords[1]), float(coords[0]))
 
     st.markdown(f"**Selected location:** {lat:.6f}, {lon:.6f}")
+    if "runtime_s" in st.session_state:
+        st.markdown(f"**Compute runtime:** :red[{format_runtime(float(st.session_state['runtime_s']))}]")
+
+    legend_selected = []
+    if st.session_state.get("mode") == "Past acquisitions":
+        legend_selected = st.session_state.get("past_selected", [])
+    elif st.session_state.get("mode") == "Future pass planning":
+        legend_selected = st.session_state.get("future_selected", [])
+    if legend_selected:
+        legend_html_inline = " ".join([
+            f"<span style='display:inline-block;margin-right:10px;'><span style='color:{mission_hex_color(s)};font-weight:900;'>★</span> {s}</span>"
+            for s in legend_selected
+        ])
+        st.markdown(
+            f"**Legend:** {legend_html_inline} <span style='margin-left:12px; display:inline-block; width:10px; height:10px; border:3px solid #FFD43B; border-radius:50%;'></span> SNO",
+            unsafe_allow_html=True,
+        )
 
     # -------------------- Tabs AFTER map --------------------
     tab_about, tab_over, tab_metrics = st.tabs(
@@ -1790,16 +1838,23 @@ def main():
                     st.warning("Select at least one satellite for future planning.")
                 else:
                     with st.spinner("Predicting future passes..."):
+                        df_pred = pd.DataFrame()
+                        used_engine = "Pyorbital"
                         use_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
                         if use_skyfield:
-                            df_pred = predict_future_passes_skyfield(
-                                sat_names=tuple(selected_future),
-                                lat=lat, lon=lon,
-                                start_date_str=start_date_str, end_date_str=end_date_str,
-                                user_tol_km=float(overpass_tol_km),
-                                min_elev_deg=float(min_elev_deg),
-                            )
-                        else:
+                            try:
+                                df_pred = predict_future_passes_skyfield(
+                                    sat_names=tuple(selected_future),
+                                    lat=lat, lon=lon,
+                                    start_date_str=start_date_str, end_date_str=end_date_str,
+                                    user_tol_km=float(overpass_tol_km),
+                                    min_elev_deg=float(min_elev_deg),
+                                )
+                                used_engine = "Skyfield"
+                            except Exception:
+                                df_pred = pd.DataFrame()
+
+                        if df_pred.empty:
                             df_pred = predict_future_passes_pyorbital(
                                 sat_names=tuple(selected_future),
                                 lat=lat, lon=lon,
@@ -1807,12 +1862,14 @@ def main():
                                 user_tol_km=float(overpass_tol_km),
                                 min_elev_deg=float(min_elev_deg),
                             )
+                            used_engine = "Pyorbital"
 
                     if df_pred.empty:
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window.")
+                        st.session_state["future_engine_used"] = used_engine
+                        st.warning("No visible passes found within tolerance. Try increasing tolerance/date window or lowering minimum elevation.")
                     else:
                         with st.spinner("Fetching weather and attaching..."):
                             df_hourly = fetch_hourly_weather(lat, lon, start_date, end_date)
@@ -1828,6 +1885,7 @@ def main():
                         st.session_state["future_df"] = df_pred_w
                         st.session_state["future_sno"] = df_sno_f
                         st.session_state["future_selected"] = list(selected_future)
+                        st.session_state["future_engine_used"] = used_engine
 
             t_end = time.perf_counter()
             st.session_state["runtime_s"] = float(t_end - t_start)
@@ -1875,6 +1933,8 @@ def main():
                 st.info("No future passes to display (yet).")
             else:
                 st.subheader("Future passes + weather")
+                if st.session_state.get("future_engine_used"):
+                    st.caption(f"Engine used: {st.session_state['future_engine_used']}")
                 cols = [
                     "sat_name", "time", "engine",
                     "cloud_cover_pct", "precip_mm", "quality_label",
