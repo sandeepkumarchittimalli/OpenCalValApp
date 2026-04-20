@@ -880,22 +880,28 @@ def fetch_tle_from_celestrak(norad_id: int) -> str:
     urls = [
         f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
         f"https://www.celestrak.com/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE",
-        f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3le",
     ]
     headers = {"User-Agent": "Mozilla/5.0 OpenCalValPlan/1.0"}
+    last_error = None
     errors = []
     for url in urls:
         try:
-            r = requests.get(url, timeout=(5, 8), headers=headers)
+            r = requests.get(url, timeout=8, headers=headers)
             r.raise_for_status()
-            tle_text = (r.text or "").strip()
-            lines = [ln.strip() for ln in tle_text.splitlines() if ln.strip()]
+            tle_text = r.text.strip()
+            lines = [l.strip() for l in tle_text.splitlines() if l.strip()]
+            if "No GP data found" in tle_text:
+                raise ValueError(f"No GP data found for NORAD {norad_id}")
             if len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
                 return "\n".join(lines[:3])
-            errors.append(f"{url} -> unexpected response: {tle_text[:120]}")
+            if len(lines) >= 2 and lines[0].startswith("1 ") and lines[1].startswith("2 "):
+                return f"NORAD {norad_id}\n{lines[0]}\n{lines[1]}"
+            raise ValueError(f"Unexpected TLE payload for NORAD {norad_id}: {tle_text[:200]}")
         except Exception as e:
+            last_error = e
             errors.append(f"{url} -> {e}")
-    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}. " + " | ".join(errors[-3:]))
+            continue
+    raise RuntimeError(f"Could not fetch TLE for NORAD {norad_id}. Tried: {' | '.join(errors) if errors else last_error}")
 
 
 @st.cache_resource(show_spinner=False)
@@ -922,6 +928,11 @@ def get_skyfield_sat_cached(sat_name: str):
     ts = load.timescale()
     sat = EarthSatellite(l1, l2, name, ts)
     return sat, ts
+
+
+def _log_future_issue(label: str, exc: Exception):
+    errs = st.session_state.setdefault("future_fetch_errors", [])
+    errs.append(f"{label}: {exc}")
 
 
 def _default_half_swath_km(sat_name: str) -> Optional[float]:
@@ -987,7 +998,8 @@ def _predict_future_passes_pyorbital_next_passes(
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception:
+        except Exception as e:
+            _log_future_issue(f"{sat} TLE/orbital", e)
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1091,7 +1103,8 @@ def predict_future_passes_pyorbital(
             continue
         try:
             orb = get_orbital_cached(sat)
-        except Exception:
+        except Exception as e:
+            _log_future_issue(f"{sat} TLE/orbital", e)
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1177,24 +1190,30 @@ def predict_future_passes_with_fallbacks(
     min_elev_deg: float,
     prefer_skyfield: bool,
 ) -> Tuple[pd.DataFrame, str]:
-    # Keep cloud execution bounded: try a small number of paths in a sensible order.
-    primary = "skyfield" if (prefer_skyfield and SKYFIELD_AVAILABLE) else "pyorbital-next"
-    attempts: List[Tuple[str, float]] = []
-    if primary == "skyfield":
-        attempts.extend([("skyfield", float(min_elev_deg)), ("pyorbital-next", float(min_elev_deg)), ("pyorbital", float(min_elev_deg))])
+    attempts = []
+    if prefer_skyfield and SKYFIELD_AVAILABLE:
+        attempts = [
+            ("skyfield", float(min_elev_deg)),
+            ("pyorbital", float(min_elev_deg)),
+            ("pyorbital-next", float(min_elev_deg)),
+            ("pyorbital", 0.0),
+            ("pyorbital-next", 0.0),
+            ("skyfield", 0.0),
+        ]
     else:
-        attempts.extend([("pyorbital-next", float(min_elev_deg)), ("pyorbital", float(min_elev_deg))])
-        if SKYFIELD_AVAILABLE:
-            attempts.append(("skyfield", float(min_elev_deg)))
+        attempts = [
+            ("pyorbital", float(min_elev_deg)),
+            ("pyorbital-next", float(min_elev_deg)),
+            ("skyfield", float(min_elev_deg)),
+            ("pyorbital", 0.0),
+            ("pyorbital-next", 0.0),
+            ("skyfield", 0.0),
+        ]
 
-    if float(min_elev_deg) > 0:
-        attempts.append((primary, 0.0))
-
-    diagnostics: List[str] = []
+    last_note = ""
     for engine_name, elev_try in attempts:
         if engine_name == "skyfield" and not SKYFIELD_AVAILABLE:
             continue
-        t0 = time.perf_counter()
         try:
             if engine_name == "skyfield":
                 df_pred = predict_future_passes_skyfield(
@@ -1215,18 +1234,16 @@ def predict_future_passes_with_fallbacks(
                     user_tol_km=float(user_tol_km), min_elev_deg=float(elev_try),
                 )
         except Exception as e:
-            diagnostics.append(f"{engine_name}@{elev_try:.1f}° failed in {time.perf_counter()-t0:.1f}s: {e}")
+            last_note = f"{engine_name} failed: {e}"
             continue
 
-        elapsed = time.perf_counter() - t0
         if not df_pred.empty:
-            label = engine_name if elev_try > 0 else f"{engine_name} (relaxed elevation=0°)"
-            diagnostics.append(f"{label} returned {len(df_pred)} passes in {elapsed:.1f}s")
-            return df_pred, " | ".join(diagnostics[-3:])
+            note = engine_name if elev_try > 0 else f"{engine_name} (relaxed elevation=0°)"
+            return df_pred, note
 
-        diagnostics.append(f"{engine_name}@{elev_try:.1f}° returned 0 passes in {elapsed:.1f}s")
+        last_note = f"No passes from {engine_name} with min elevation {elev_try:.1f}°"
 
-    return pd.DataFrame(), " | ".join(diagnostics[-4:])
+    return pd.DataFrame(), last_note
 
 
 @st.cache_data(show_spinner=True)
@@ -1257,7 +1274,8 @@ def predict_future_passes_skyfield(
             continue
         try:
             sat_obj, _ = get_skyfield_sat_cached(sat)
-        except Exception:
+        except Exception as e:
+            _log_future_issue(f"{sat} Skyfield TLE", e)
             continue
 
         half_swath = _default_half_swath_km(sat)
@@ -1265,7 +1283,8 @@ def predict_future_passes_skyfield(
 
         try:
             t_events, events = sat_obj.find_events(observer, t0, t1, altitude_degrees=min_elev_deg)
-        except Exception:
+        except Exception as e:
+            _log_future_issue(f"{sat} Skyfield find_events", e)
             continue
 
         current_triplet = {}
@@ -1430,7 +1449,7 @@ def reset_app_inputs():
         "future_df_raw", "future_df", "future_sno",
         "runtime_s", "run_start_time",
         "_last_click", "map_lat", "map_lon",
-        "future_diag", "future_engine_used",
+        "future_diag", "future_engine_used", "future_fetch_errors", "future_pred_note",
     ]
     for k in keys_to_remove:
         st.session_state.pop(k, None)
@@ -2043,6 +2062,7 @@ def main():
                 if not selected_future:
                     st.warning("Select at least one satellite for future planning.")
                 else:
+                    st.session_state["future_fetch_errors"] = []
                     with st.spinner("Predicting future passes..."):
                         prefer_skyfield = SKYFIELD_AVAILABLE and ("Skyfield" in future_engine)
                         df_pred, future_pred_note = predict_future_passes_with_fallbacks(
@@ -2059,10 +2079,13 @@ def main():
                         st.session_state["future_df_raw"] = df_pred
                         st.session_state["future_df"] = pd.DataFrame()
                         st.session_state["future_sno"] = pd.DataFrame()
-                        msg = "No visible future passes found. Try increasing tolerance/date window or check diagnostics below."
+                        msg = "No visible passes found within tolerance. Try increasing tolerance/date window."
                         note = st.session_state.get("future_pred_note", "")
+                        errs = st.session_state.get("future_fetch_errors", [])
                         if note:
                             msg += f" Diagnostics: {note}"
+                        if errs:
+                            msg += " Errors: " + " || ".join(errs[:6])
                         st.warning(msg)
                     else:
                         with st.spinner("Fetching weather and attaching..."):
