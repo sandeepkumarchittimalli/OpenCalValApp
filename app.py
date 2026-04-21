@@ -407,6 +407,21 @@ st.sidebar.markdown(
 
 
 if "google_tokens" not in st.session_state:
+    #st.sidebar.markdown(
+    #"""
+    #<div style="
+    #    background-color: #E8F0FE;
+    #    padding: 10px;
+    #    border-radius: 8px;
+    #    border: 1px solid #D2E3FC;
+    #    text-align: center;
+    #    font-weight: 500;
+    #">
+    #    🔐 Connect Google Earth Engine to continue
+    #</div>
+    #""",
+    #unsafe_allow_html=True
+#)
     st.sidebar.markdown(
     """
     <div style="
@@ -416,13 +431,13 @@ if "google_tokens" not in st.session_state:
         border: 1px solid #D2E3FC;
         text-align: center;
         font-weight: 500;
-    ">
+    "> 
         🔐 Connect Google Earth Engine to continue
     </div>
     """,
     unsafe_allow_html=True
 )
-
+   
     st.sidebar.link_button(
     "🔑 Sign in with Google",
     OAUTH_BACKEND_START,
