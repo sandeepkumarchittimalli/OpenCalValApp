@@ -400,7 +400,7 @@ finish_oauth_if_needed()
 st.sidebar.header("Google Earth Engine Login")
 #st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
 st.sidebar.caption(
-    "🔐 Use your Google account and project ID for Earth Engine processing • 📖 See setup guide below"
+    "🔐 Uses your Google account and project ID for Earth Engine processing • 📖 See setup guide below"
 )
 
 st.sidebar.markdown(
@@ -446,7 +446,7 @@ if "google_tokens" not in st.session_state:
     """
     )
     #st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
-    st.sidebar.warning("Connect your Google account first.")
+    #st.sidebar.warning("Connect your Google account first.")
     st.stop()
 
 st.sidebar.success("Google account connected ✅")
