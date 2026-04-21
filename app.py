@@ -608,25 +608,23 @@ def add_sno_ring(layer, lat, lon, color="#FFD43B"):
     ).add_to(layer)
 
 
+
 map_text = """
 <div style="
     position: fixed;
-    bottom: 15px;
-    left: 15px;
-    z-index: 9999;
-    background-color: rgba(255,255,255,0.9);
+    top: 70px;
+    right: 20px;
+    z-index: 999999;
+    background-color: rgba(255,255,255,0.95);
     padding: 6px 10px;
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 11px;
     font-weight: 500;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 ">
     🔍 Zoom in to view Scene ID, time, and details
 </div>
 """
-
-m.get_root().html.add_child(Element(map_text))
-
 # ------------------- WEATHER -------------------
 
 @st.cache_data(show_spinner=False)
@@ -1421,6 +1419,7 @@ def reset_app_inputs():
 
     st.cache_data.clear()
     st.rerun()
+map_text = """..."""   # top of file
 
 def main():
 
@@ -1853,7 +1852,24 @@ def main():
             </div>
             """
             m.get_root().html.add_child(folium.Element(legend_html))
+    m = folium.Map(
+        location=st.session_state["map_view_center"],
+        zoom_start=st.session_state["map_view_zoom"],
+        control_scale=True
+    )
 
+    # add layers, stars, rings, etc.
+
+    from folium import Element
+    m.get_root().html.add_child(Element(map_text))   # ✅ correct
+
+    map_data = st_folium(
+        m,
+        width=None,
+        height=700,
+        returned_objects=["last_clicked", "zoom", "center"],
+        key="map"
+    )
     # ---- Overlay Future Results ----
     if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
@@ -2218,6 +2234,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
