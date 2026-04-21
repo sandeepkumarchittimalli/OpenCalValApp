@@ -2017,13 +2017,13 @@ def main():
                         except Exception as e:
                            msg = str(e)
                            if "Project" in msg and "not found" in msg:
-      			       st.error("Invalid Google Earth Engine Project ID. Please check it and try again.")
+                               st.error("Invalid Google Earth Engine Project ID. Please check it and try again.")
     			   elif "permission" in msg.lower() or "access" in msg.lower():
-        			 st.error("Google Earth Engine access failed. Please verify your account and project permissions.")
+                                st.error("Google Earth Engine access failed. Please verify your account and project permissions.")
     			   else:
-        			st.error("Google Earth Engine request failed. Please check your project ID and try again.")
+                                st.error("Google Earth Engine request failed. Please check your project ID and try again.")
 
-    st.stop()
+                           st.stop()
 
                     if df_events.empty:
                         st.session_state["past_df_raw"] = df_events
