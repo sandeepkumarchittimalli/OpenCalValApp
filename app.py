@@ -434,14 +434,14 @@ if "google_tokens" not in st.session_state:
     #OAUTH_BACKEND_START,
     #use_container_width=True)
     st.sidebar.caption("Secure Google authentication")
-with st.sidebar.expander("**Privacy & Usage Notice** ", expanded=False):
-    st.markdown( 
+    with st.sidebar.expander("**Privacy & Usage Notice** ", expanded=False):
+         st.markdown( 
         """
-- Uses your Google account **only for Earth Engine authentication**
-- No personal data is stored, shared, or retained
-- Only your **GEE Project ID and credentials** are used
-- Do **not** enter sensitive or personal information
-"""
+    - Uses your Google account **only for Earth Engine authentication**
+    - No personal data is stored, shared, or retained
+    - Only your **GEE Project ID and credentials** are used
+    - Do **not** enter sensitive or personal information
+    """
     )
     #st.sidebar.info("🔐 **Connect your Google Earth Engine account to continue**")
     st.sidebar.warning("Connect your Google account first.")
