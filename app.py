@@ -398,8 +398,10 @@ def init_ee(project_id: str) -> str:
 finish_oauth_if_needed()
 
 st.sidebar.header("Google Earth Engine Login")
-st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
-
+#st.sidebar.caption("🔐 Uses your Google account and project for Earth Engine processing")
+st.sidebar.caption(
+    "🔐 Use your Google account and project ID for Earth Engine processing • 📖 See setup guide below"
+)
 
 st.sidebar.markdown(
     "📖 [Official GEE Setup Guide](https://developers.google.com/earth-engine/guides/auth)"
