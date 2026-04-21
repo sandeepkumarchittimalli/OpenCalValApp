@@ -1852,24 +1852,7 @@ def main():
             </div>
             """
             m.get_root().html.add_child(folium.Element(legend_html))
-    m = folium.Map(
-        location=st.session_state["map_view_center"],
-        zoom_start=st.session_state["map_view_zoom"],
-        control_scale=True
-    )
 
-    # add layers, stars, rings, etc.
-
-    from folium import Element
-    m.get_root().html.add_child(Element(map_text))   # ✅ correct
-
-    map_data = st_folium(
-        m,
-        width=None,
-        height=700,
-        returned_objects=["last_clicked", "zoom", "center"],
-        key="map"
-    )
     # ---- Overlay Future Results ----
     if st.session_state.get("mode") == "Future pass planning" and "future_df_raw" in st.session_state:
         df_raw = st.session_state.get("future_df_raw", pd.DataFrame())
