@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, date
 from math import radians, sin, cos, acos
 from typing import Dict, Any, List, Optional, Tuple
-
+from folium import Element
 import time
 import requests
 import numpy as np
@@ -607,6 +607,25 @@ def add_sno_ring(layer, lat, lon, color="#FFD43B"):
         opacity=0.95
     ).add_to(layer)
 
+
+map_text = """
+<div style="
+    position: fixed;
+    bottom: 15px;
+    left: 15px;
+    z-index: 9999;
+    background-color: rgba(255,255,255,0.9);
+    padding: 6px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+">
+    🔍 Zoom in to view Scene ID, time, and details
+</div>
+"""
+
+m.get_root().html.add_child(Element(map_text))
 
 # ------------------- WEATHER -------------------
 
@@ -1988,12 +2007,23 @@ def main():
                     st.warning("Select at least one past mission.")
                 else:
                     with st.spinner("Fetching past acquisitions from GEE (accurate)..."):
-                        df_events = gee_past_acquisitions(
-                            lat=lat, lon=lon,
-                            start_date=start_date_str, end_date=end_date_str,
-                            selected_missions=tuple(selected_past),
-                            site_buffer_m=float(site_buffer_m),
-                        )
+                        try:
+                           df_events = gee_past_acquisitions(
+                           lat=lat, lon=lon,
+                           start_date=start_date_str, end_date=end_date_str,
+                           selected_missions=tuple(selected_past),
+                           site_buffer_m=float(site_buffer_m),
+                           )
+                        except Exception as e:
+                           msg = str(e)
+                           if "Project" in msg and "not found" in msg:
+      			       st.error("Invalid Google Earth Engine Project ID. Please check it and try again.")
+    			   elif "permission" in msg.lower() or "access" in msg.lower():
+        			 st.error("Google Earth Engine access failed. Please verify your account and project permissions.")
+    			   else:
+        			st.error("Google Earth Engine request failed. Please check your project ID and try again.")
+
+    st.stop()
 
                     if df_events.empty:
                         st.session_state["past_df_raw"] = df_events
