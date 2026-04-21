@@ -425,19 +425,21 @@ if "google_tokens" not in st.session_state:
     st.sidebar.markdown(
     """
     <div style="
-        background-color: #E8F0FE;
+        background: var(--secondary-background-color);
+        color: var(--text-color);
         padding: 10px;
         border-radius: 8px;
-        border: 1px solid #D2E3FC;
+        border: 1px solid var(--text-color);
         text-align: center;
         font-weight: 500;
-    "> 
+        opacity: 0.95;
+    ">
         🔐 Connect Google Earth Engine to continue
     </div>
     """,
     unsafe_allow_html=True
 )
-   
+      
     st.sidebar.link_button(
     "🔑 Sign in with Google",
     OAUTH_BACKEND_START,
