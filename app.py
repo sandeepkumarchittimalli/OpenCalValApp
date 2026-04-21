@@ -2018,9 +2018,9 @@ def main():
                            msg = str(e)
                            if "Project" in msg and "not found" in msg:
                                st.error("Invalid Google Earth Engine Project ID. Please check it and try again.")
-    			   elif "permission" in msg.lower() or "access" in msg.lower():
+                           elif "permission" in msg.lower() or "access" in msg.lower():
                                 st.error("Google Earth Engine access failed. Please verify your account and project permissions.")
-    			   else:
+                           else:
                                 st.error("Google Earth Engine request failed. Please check your project ID and try again.")
 
                            st.stop()
