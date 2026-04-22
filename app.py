@@ -1421,7 +1421,9 @@ def reset_app_inputs():
 
     st.cache_data.clear()
     st.rerun()
-map_text = """..."""   # top of file
+#map_text = """..."""   # top of file
+
+
 
 def main():
 
@@ -1456,21 +1458,6 @@ def main():
     if "map_view_zoom" not in st.session_state:
         st.session_state["map_view_zoom"] = 7
 
-    st.sidebar.markdown("### 📍 Location")
-
-    lat_input = st.sidebar.number_input(
-    "Latitude",
-    value=float(st.session_state.get("lat", DEFAULT_LAT)),
-    format="%.6f",
-    key="lat_input")
-
-    lon_input = st.sidebar.number_input(
-    "Longitude",
-    value=float(st.session_state.get("lon", DEFAULT_LON)),
-    format="%.6f",
-    key="lon_input")
-    st.session_state["lat"] = lat_input
-    st.session_state["lon"] = lon_input
     # GEE init
     try:
         mode_gee = init_ee(project_id)
@@ -1481,22 +1468,73 @@ def main():
 
     # Sidebar
     st.sidebar.header("Site & Period")
+    # ---- Location Inputs ----
+    st.sidebar.markdown("### 📍 Location")
+
+    if "lat_input" not in st.session_state:
+    	st.session_state["lat_input"] = float(st.session_state.get("lat", DEFAULT_LAT))
+
+    if "lon_input" not in st.session_state:
+        st.session_state["lon_input"] = float(st.session_state.get("lon", DEFAULT_LON))
+
+
+    def on_latlon_change():
+        st.session_state["lat"] = float(st.session_state["lat_input"])
+        st.session_state["lon"] = float(st.session_state["lon_input"])
+        st.session_state["map_view_center"] = [
+        st.session_state["lat"],
+        st.session_state["lon"]]
+
+
+    st.sidebar.number_input(
+    "Latitude (deg)",
+    min_value=-90.0,
+    max_value=90.0,
+    step=0.0001,
+    format="%.6f",
+    key="lat_input",
+    on_change=on_latlon_change,
+    )
+
+    st.sidebar.number_input(
+    "Longitude (deg)",
+    min_value=-180.0,
+    max_value=180.0,
+    step=0.0001,
+    format="%.6f",
+    key="lon_input",
+    on_change=on_latlon_change,
+    )   
+ 
+
 
     site_choice = st.sidebar.selectbox(
         "Quick test sites",
         options=list(TEST_SITES.keys()),
         key="site_choice"
     )
+    #if site_choice != st.session_state.get("_site_choice_applied"):
+    #    st.session_state["_site_choice_applied"] = site_choice
+    #    if site_choice != "Custom (use inputs)" and TEST_SITES[site_choice] is not None:
+    #        lat0, lon0 = TEST_SITES[site_choice]
+    #        st.session_state["lat"] = float(lat0)
+    #        st.session_state["lon"] = float(lon0)
+    #        st.session_state["lat_input"] = float(lat0)
+    #        st.session_state["lon_input"] = float(lon0)
+    #        st.session_state["map_view_center"] = [float(lat0), float(lon0)]
+    #        st.session_state["map_view_zoom"] = 7
+    
     if site_choice != st.session_state.get("_site_choice_applied"):
         st.session_state["_site_choice_applied"] = site_choice
         if site_choice != "Custom (use inputs)" and TEST_SITES[site_choice] is not None:
             lat0, lon0 = TEST_SITES[site_choice]
             st.session_state["lat"] = float(lat0)
             st.session_state["lon"] = float(lon0)
-            st.session_state["lat_input"] = float(lat0)
-            st.session_state["lon_input"] = float(lon0)
+            st.session_state.pop("lat_input", None)
+            st.session_state.pop("lon_input", None)
             st.session_state["map_view_center"] = [float(lat0), float(lon0)]
             st.session_state["map_view_zoom"] = 7
+            st.rerun()
 
     today = datetime.utcnow().date()
     tomorrow = today + timedelta(days=1)
