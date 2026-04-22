@@ -1456,6 +1456,21 @@ def main():
     if "map_view_zoom" not in st.session_state:
         st.session_state["map_view_zoom"] = 7
 
+    st.sidebar.markdown("### 📍 Location")
+
+    lat_input = st.sidebar.number_input(
+    "Latitude",
+    value=float(st.session_state.get("lat", DEFAULT_LAT)),
+    format="%.6f",
+    key="lat_input")
+
+    lon_input = st.sidebar.number_input(
+    "Longitude",
+    value=float(st.session_state.get("lon", DEFAULT_LON)),
+    format="%.6f",
+    key="lon_input")
+    st.session_state["lat"] = lat_input
+    st.session_state["lon"] = lon_input
     # GEE init
     try:
         mode_gee = init_ee(project_id)
@@ -1925,7 +1940,7 @@ def main():
             m.get_root().html.add_child(folium.Element(legend_html))
 
     folium.LayerControl().add_to(m)
-     
+    st.caption("🔍 Zoom in for more details on each point")
     map_data = st_folium(
     m,
     height=450,
@@ -1933,6 +1948,14 @@ def main():
     key="site_map",
     returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
 )
+    
+    if map_data and map_data.get("last_clicked"):
+       st.session_state["lat"] = map_data["last_clicked"]["lat"]
+       st.session_state["lon"] = map_data["last_clicked"]["lng"]
+
+       st.session_state["lat_input"] = st.session_state["lat"]
+       st.session_state["lon_input"] = st.session_state["lon"]
+
 
     if map_data:
        if map_data.get("center"):
