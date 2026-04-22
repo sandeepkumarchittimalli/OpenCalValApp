@@ -495,23 +495,26 @@ if submit_project:
     try:
         st.cache_resource.clear()
         init_ee(cleaned_project_id)
+
+        # real validation call: forces EE to use the project now
+        ee.Number(1).getInfo()
+
         st.session_state["latest_projectid"] = cleaned_project_id
         st.session_state["project_submitted"] = True
-        st.sidebar.success(f"GEE initialized successfully ✅ ({cleaned_project_id})")
         st.rerun()
+
     except Exception as e:
         st.session_state["project_submitted"] = False
         msg = str(e)
 
-        if "Project" in msg and "not found" in msg:
-            st.sidebar.error("Invalid Google Earth Engine Project ID.")
+        if "not found" in msg.lower() or "project" in msg.lower():
+            st.sidebar.error("Invalid Google Earth Engine Project ID. Please check it and try again.")
         elif "permission" in msg.lower() or "access" in msg.lower():
-            st.sidebar.error("Earth Engine access failed. Check project permissions.")
+            st.sidebar.error("Earth Engine access failed. Check your project permissions.")
         else:
-            st.sidebar.error("GEE initialization failed. Please verify your project ID.")
+            st.sidebar.error("GEE validation failed. Please verify your project ID.")
 
         st.stop()
-
 
 
 
