@@ -2001,13 +2001,21 @@ def main():
     returned_objects=["last_clicked", "last_object_clicked", "center", "zoom"],
 )
     
-    if map_data and map_data.get("last_clicked"):
-       st.session_state["lat"] = map_data["last_clicked"]["lat"]
-       st.session_state["lon"] = map_data["last_clicked"]["lng"]
+    #if map_data and map_data.get("last_clicked"):
+    #   st.session_state["lat"] = map_data["last_clicked"]["lat"]
+    #   st.session_state["lon"] = map_data["last_clicked"]["lng"]
+    
+    #   st.session_state["lat_input"] = st.session_state["lat"]
+    #   st.session_state["lon_input"] = st.session_state["lon"]
 
-       st.session_state["lat_input"] = st.session_state["lat"]
-       st.session_state["lon_input"] = st.session_state["lon"]
+   if map_data and map_data.get("last_clicked"):
+    st.session_state["lat"] = float(map_data["last_clicked"]["lat"])
+    st.session_state["lon"] = float(map_data["last_clicked"]["lng"])
+    st.session_state["map_view_center"] = [st.session_state["lat"], st.session_state["lon"]]
 
+    st.session_state.pop("lat_input", None)
+    st.session_state.pop("lon_input", None)
+    st.rerun()    
 
     if map_data:
        if map_data.get("center"):
