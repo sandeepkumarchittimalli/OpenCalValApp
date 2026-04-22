@@ -463,7 +463,7 @@ st.sidebar.text_input(
     key="project_id_draft",
 )
 
-submit_project = st.sidebar.button("Submit Project ID", type="primary", use_container_width=True, key="submit_project_id_btn")
+#submit_project = st.sidebar.button("Submit Project ID", type="primary", use_container_width=True, key="submit_project_id_btn")
 
 #if submit_project:
 #    cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
