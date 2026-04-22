@@ -465,17 +465,55 @@ st.sidebar.text_input(
 
 submit_project = st.sidebar.button("Submit Project ID", type="primary", use_container_width=True, key="submit_project_id_btn")
 
+#if submit_project:
+#    cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
+#    if cleaned_project_id:
+#        st.session_state["latest_projectid"] = cleaned_project_id
+#        st.session_state["project_submitted"] = True
+#        st.cache_resource.clear()
+#        st.rerun()
+#    else:
+#        st.session_state["project_submitted"] = False
+#        st.sidebar.warning("Please enter a valid GEE Project ID.")
+#        st.stop()
+
+submit_project = st.sidebar.button(
+    "Submit Project ID",
+    type="primary",
+    use_container_width=True,
+    key="submit_project_id_btn"
+)
+
 if submit_project:
     cleaned_project_id = st.session_state.get("project_id_draft", "").strip()
-    if cleaned_project_id:
-        st.session_state["latest_projectid"] = cleaned_project_id
-        st.session_state["project_submitted"] = True
-        st.cache_resource.clear()
-        st.rerun()
-    else:
+
+    if not cleaned_project_id:
         st.session_state["project_submitted"] = False
         st.sidebar.warning("Please enter a valid GEE Project ID.")
         st.stop()
+
+    try:
+        st.cache_resource.clear()
+        init_ee(cleaned_project_id)
+        st.session_state["latest_projectid"] = cleaned_project_id
+        st.session_state["project_submitted"] = True
+        st.sidebar.success(f"GEE initialized successfully ✅ ({cleaned_project_id})")
+        st.rerun()
+    except Exception as e:
+        st.session_state["project_submitted"] = False
+        msg = str(e)
+
+        if "Project" in msg and "not found" in msg:
+            st.sidebar.error("Invalid Google Earth Engine Project ID.")
+        elif "permission" in msg.lower() or "access" in msg.lower():
+            st.sidebar.error("Earth Engine access failed. Check project permissions.")
+        else:
+            st.sidebar.error("GEE initialization failed. Please verify your project ID.")
+
+        st.stop()
+
+
+
 
 if not st.session_state["project_submitted"]:
     st.sidebar.info("Enter your GEE Project ID and click Submit Project ID.")
@@ -1469,7 +1507,7 @@ def main():
     st.sidebar.header("Site & Period")
 
     # ---- Location Inputs ----
-    st.sidebar.markdown("### 📍 Location(Use Custom Lat/Long or select on map)")
+    st.sidebar.markdown("### 📍 Location(enter lat/lon or click on map)")
 
     if "lat_input" not in st.session_state:
     	st.session_state["lat_input"] = float(st.session_state.get("lat", DEFAULT_LAT))
