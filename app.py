@@ -146,7 +146,6 @@ Choosing too short a window for early missions will correctly return zero SNOs.
 
 # Quick test sites (Sonoran corrected to be inside desert region)
 TEST_SITES = {
-    "Custom (use inputs)": None,
     "Crater Lake (OR)": (42.944611, -122.109245),
     "Sonoran Desert (AZ) – center-ish": (31.8500823, -111.8568586),
     "Algodones Dunes (CA)": (32.9583762, -115.0841386),
@@ -1468,8 +1467,9 @@ def main():
 
     # Sidebar
     st.sidebar.header("Site & Period")
+
     # ---- Location Inputs ----
-    st.sidebar.markdown("### 📍 Location")
+    st.sidebar.markdown("### 📍 Location(Use Custom Lat/Long or select on map)")
 
     if "lat_input" not in st.session_state:
     	st.session_state["lat_input"] = float(st.session_state.get("lat", DEFAULT_LAT))
@@ -1478,51 +1478,11 @@ def main():
         st.session_state["lon_input"] = float(st.session_state.get("lon", DEFAULT_LON))
 
 
-    #def on_latlon_change():
-    #    st.session_state["lat"] = float(st.session_state["lat_input"])
-    #    st.session_state["lon"] = float(st.session_state["lon_input"])
-    #    st.session_state["map_view_center"] = [
-    #    st.session_state["lat"],
-    #    st.session_state["lon"]]
-
-
-    #st.sidebar.number_input(
-    #"Latitude (deg)",
-    #min_value=-90.0,
-    #max_value=90.0,
-    #step=0.0001,
-    #format="%.6f",
-    #key="lat_input",
-    #on_change=on_latlon_change,
-    #)
-
-    #st.sidebar.number_input(
-    #"Longitude (deg)",
-    #min_value=-180.0,
-    #max_value=180.0,
-    #step=0.0001,
-    #format="%.6f",
-    #key="lon_input",
-    #on_change=on_latlon_change,
-    #)   
- 
-
-
     site_choice = st.sidebar.selectbox(
         "Quick test sites",
         options=list(TEST_SITES.keys()),
         key="site_choice"
     )
-    #if site_choice != st.session_state.get("_site_choice_applied"):
-    #    st.session_state["_site_choice_applied"] = site_choice
-    #    if site_choice != "Custom (use inputs)" and TEST_SITES[site_choice] is not None:
-    #        lat0, lon0 = TEST_SITES[site_choice]
-    #        st.session_state["lat"] = float(lat0)
-    #        st.session_state["lon"] = float(lon0)
-    #        st.session_state["lat_input"] = float(lat0)
-    #        st.session_state["lon_input"] = float(lon0)
-    #        st.session_state["map_view_center"] = [float(lat0), float(lon0)]
-    #        st.session_state["map_view_zoom"] = 7
     
     if site_choice != st.session_state.get("_site_choice_applied"):
         st.session_state["_site_choice_applied"] = site_choice
@@ -1540,19 +1500,19 @@ def main():
     tomorrow = today + timedelta(days=1)
     yesterday = today - timedelta(days=1)
 
-    mode_choice = st.sidebar.radio(
-        "Choose",
-        options=["Past acquisitions", "Future pass planning"],
-        index=0 if st.session_state["mode"] == "Past acquisitions" else 1,
-        key="mode_choice",
-    )
-    if mode_choice != st.session_state["mode"]:
-        st.session_state["mode"] = mode_choice
-        if mode_choice == "Future pass planning":
-            st.session_state["date_range"] = (tomorrow, tomorrow + timedelta(days=30))
-        else:
-            st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
-        st.rerun()
+    #mode_choice = st.sidebar.radio(
+    #    "Choose",
+    #    options=["Past acquisitions", "Future pass planning"],
+    #    index=0 if st.session_state["mode"] == "Past acquisitions" else 1,
+    #    key="mode_choice",
+    #)
+    #if mode_choice != st.session_state["mode"]:
+    #    st.session_state["mode"] = mode_choice
+    #    if mode_choice == "Future pass planning":
+    #        st.session_state["date_range"] = (tomorrow, tomorrow + timedelta(days=30))
+    #    else:
+    #        st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
+    #    st.rerun()
 
     def on_latlon_change():
         st.session_state["lat"] = float(st.session_state["lat_input"])
@@ -1589,6 +1549,19 @@ def main():
         max_value=max_d,
         key="date_range_widget",
     )
+    mode_choice = st.sidebar.radio(
+        "Choose",
+        options=["Past acquisitions", "Future pass planning"],
+        index=0 if st.session_state["mode"] == "Past acquisitions" else 1,
+        key="mode_choice",
+    )
+    if mode_choice != st.session_state["mode"]:
+        st.session_state["mode"] = mode_choice
+        if mode_choice == "Future pass planning":
+            st.session_state["date_range"] = (tomorrow, tomorrow + timedelta(days=30))
+        else:
+            st.session_state["date_range"] = (today - timedelta(days=90), yesterday)
+        st.rerun()
 
     if isinstance(date_range, (tuple, list)):
         if len(date_range) >= 2:
