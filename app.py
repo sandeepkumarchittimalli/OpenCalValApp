@@ -1478,33 +1478,33 @@ def main():
         st.session_state["lon_input"] = float(st.session_state.get("lon", DEFAULT_LON))
 
 
-    def on_latlon_change():
-        st.session_state["lat"] = float(st.session_state["lat_input"])
-        st.session_state["lon"] = float(st.session_state["lon_input"])
-        st.session_state["map_view_center"] = [
-        st.session_state["lat"],
-        st.session_state["lon"]]
+    #def on_latlon_change():
+    #    st.session_state["lat"] = float(st.session_state["lat_input"])
+    #    st.session_state["lon"] = float(st.session_state["lon_input"])
+    #    st.session_state["map_view_center"] = [
+    #    st.session_state["lat"],
+    #    st.session_state["lon"]]
 
 
-    st.sidebar.number_input(
-    "Latitude (deg)",
-    min_value=-90.0,
-    max_value=90.0,
-    step=0.0001,
-    format="%.6f",
-    key="lat_input",
-    on_change=on_latlon_change,
-    )
+    #st.sidebar.number_input(
+    #"Latitude (deg)",
+    #min_value=-90.0,
+    #max_value=90.0,
+    #step=0.0001,
+    #format="%.6f",
+    #key="lat_input",
+    #on_change=on_latlon_change,
+    #)
 
-    st.sidebar.number_input(
-    "Longitude (deg)",
-    min_value=-180.0,
-    max_value=180.0,
-    step=0.0001,
-    format="%.6f",
-    key="lon_input",
-    on_change=on_latlon_change,
-    )   
+    #st.sidebar.number_input(
+    #"Longitude (deg)",
+    #min_value=-180.0,
+    #max_value=180.0,
+    #step=0.0001,
+    #format="%.6f",
+    #key="lon_input",
+    #on_change=on_latlon_change,
+    #)   
  
 
 
