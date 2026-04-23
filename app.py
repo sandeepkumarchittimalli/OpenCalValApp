@@ -144,7 +144,7 @@ Choosing too short a window for early missions will correctly return zero SNOs.
 """
 
 
-# Quick test sites (Sonoran corrected to be inside desert region)
+# Quick test sites
 TEST_SITES = {
     "Crater Lake (OR)": (42.944611, -122.109245),
     "Sonoran Desert (AZ) – center-ish": (31.8500823, -111.8568586),
@@ -175,7 +175,7 @@ MISSION_COLORS: Dict[str, str] = {
     "LANDSAT 5 TM": "#00E676",
     "LANDSAT 7": "#FFD43B",
     "LANDSAT 8": "#FF0000",
-    "LANDSAT 9": "#00FFFF",  # changed from white for visibility across layers
+    "LANDSAT 9": "#00FFFF",  
 
     "SENTINEL-2A": "#00FFFF",
     "SENTINEL-2B": "#2979FF",
@@ -190,7 +190,7 @@ MISSION_COLORS: Dict[str, str] = {
 
 
 # ------------------- FUTURE SATELLITES (TLE) -------------------
-# Landsat 7 is decommissioned (keep for past, omit from future)
+# Landsat 7 is decommissioned (keeping for past, omit from future)
 SATELLITE_NORAD: Dict[str, int] = {
     "LANDSAT 8": 39084,
     "LANDSAT 9": 49260,
@@ -1450,7 +1450,6 @@ def reset_app_inputs():
     st.session_state["map_view_center"] = [float(DEFAULT_LAT), float(DEFAULT_LON)]
     st.session_state["map_view_zoom"] = 7
 
-    # Remove widget-backed keys so Streamlit recreates them with defaults on rerun
     widget_keys_to_clear = [
         "lat_input", "lon_input", "site_choice", "mode_choice", "date_range_widget",
         "selected_past", "selected_future", "site_buffer_m", "overpass_tol_km",
@@ -1461,7 +1460,6 @@ def reset_app_inputs():
 
     st.cache_data.clear()
     st.rerun()
-#map_text = """..."""   # top of file
 
 
 
@@ -2036,7 +2034,7 @@ def main():
            #st.rerun() 
 
 
-     # Only background click will update site
+     # Only to update background when clicked on the map or specific site
     if map_data and map_data.get("last_clicked") and not map_data.get("last_object_clicked"):
         request_map_update(
         float(map_data["last_clicked"]["lat"]),
@@ -2123,7 +2121,7 @@ def main():
                             df_events_w = attach_weather(df_events, df_hourly)
 
                         df_sno = compute_snos_allpairs(df_events, float(sno_window_min))
-                        # add per-row PAIR_FLAG so metrics can count GOOD/OK/BAD from SNO table directly
+                        # adding per-row PAIR_FLAG so metrics can count GOOD/OK/BAD from SNO table directly.Note: Have to delete same sensors metrics(Landsat5MSS-TM, Landsat4MSS-TM)
                         df_sno = add_pair_flag_to_sno_table(df_sno, df_events_w)
 
                         st.session_state["past_df_raw"] = df_events
@@ -2168,8 +2166,6 @@ def main():
                             df_pred_w = attach_weather(df_pred, df_hourly)
 
                         df_sno_f = compute_future_snos(df_pred, float(sno_window_min))
-                        # future SNOs don't have scene cloud; use weather-based label if you want
-                        # For now keep simple: OK
                         if not df_sno_f.empty:
                             df_sno_f["PAIR_FLAG"] = "OK"
 
@@ -2209,7 +2205,7 @@ def main():
                 if df_sno is None or df_sno.empty:
                     st.info("No SNO candidates found for this window.")
                 else:
-                    # show PAIR_FLAG as user wanted (no cloud_a/cloud_b)
+                    # show PAIR_FLAG for users (no cloud_a/cloud_b)
                     show_cols = [
                         "time_a", "sat_a", "scene_a", "collection_a",
                         "time_b", "sat_b", "scene_b", "collection_b",
@@ -2290,12 +2286,12 @@ def main():
             if df_sno_f is None or df_sno_f.empty:
                 st.info("No SNOs found (or run Future pass planning first).")
             else:
-                # future df_sno_f has PAIR_FLAG maybe OK; still show counts
+                # future df_sno_f's with pair Flag
                 if "PAIR_FLAG" not in df_sno_f.columns:
                     df_sno_f = df_sno_f.copy()
                     df_sno_f["PAIR_FLAG"] = "OK"
-                m2 = sno_metrics_by_pair_counts(df_sno_f.rename(columns={"sat_name": "sat_a"}))  # harmless
-                # For future table, the pair columns are sat_a/sat_b already; keep as is:
+                m2 = sno_metrics_by_pair_counts(df_sno_f.rename(columns={"sat_name": "sat_a"}))  
+                # For future table, the pair columns are sat_a/sat_b
                 m2 = sno_metrics_by_pair_counts(df_sno_f)
                 st.dataframe(m2, use_container_width=True)
 
