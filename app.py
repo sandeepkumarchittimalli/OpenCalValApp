@@ -93,6 +93,9 @@ BAD_PRECIP_MM = 1.0
 
 MIN_ELEV_DEG_DEFAULT = 5.0  # future pass planning threshold
 
+# TEST: near-nadir threshold used only for the SNO display flag when a sensor zenith angle is available.
+NADIR_MAX_VIEW_ZENITH_DEG = 5.0
+
 
 ABOUT_MD = f"""
 ### What this tool does
@@ -836,6 +839,30 @@ def gee_past_acquisitions(
                 sun_zen2 = ee.Algorithms.If(sun_zen, sun_zen,
                                            ee.Algorithms.If(sun_el, ee.Number(90).subtract(ee.Number(sun_el)), None))
 
+                # --- TEST: nadir/off-nadir metadata used only for SNO table display ---
+                # Landsat Collection 2 can expose NADIR_OFFNADIR as scene metadata.
+                nadir_meta = img.get("NADIR_OFFNADIR") if mission.key.startswith("LANDSAT") else None
+
+                # Sentinel-2 exposes mean viewing-incidence zenith angle by band.
+                view_zen = (
+                    img.get("MEAN_INCIDENCE_ZENITH_ANGLE_B4")
+                    if mission.key in ("SENTINEL-2A", "SENTINEL-2B")
+                    else None
+                )
+
+                # VIIRS VNP09GA exposes SensorZenith as a 1-km band (degrees).
+                if mission.key == "SUOMI NPP (VIIRS)":
+                    view_zen = img.select("SensorZenith").reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=pt,
+                        scale=1000,
+                        bestEffort=True,
+                        maxPixels=100000,
+                    ).get("SensorZenith")
+
+                # MOD09GQ/MYD09GQ used by this app do not carry SensorZenith;
+                # keep their nadir status UNKNOWN rather than changing datasets.
+
                 props = {
                     "time": t,
                     "sat_name": mission.key,
@@ -845,6 +872,8 @@ def gee_past_acquisitions(
                     "cloud_scene_pct": cloud,
                     "sun_azimuth_deg": sun_az,
                     "sun_zenith_deg": sun_zen2,
+                    "nadir_metadata": nadir_meta,
+                    "view_zenith_deg": view_zen,
                     "scene_center_dist_km": img.get("scene_center_dist_km"),
                     "scene_center_lat": img.get("scene_center_lat"),
                     "scene_center_lon": img.get("scene_center_lon"),
@@ -863,6 +892,24 @@ def gee_past_acquisitions(
                 except Exception:
                     continue
 
+                # Convert mission-specific geometry into one simple scene flag.
+                nadir_meta = p.get("nadir_metadata")
+                view_zenith_deg = _safe_float(p.get("view_zenith_deg"))
+                nadir_flag = "UNKNOWN"
+
+                if nadir_meta is not None:
+                    nadir_text = str(nadir_meta).strip().upper()
+                    if "OFF" in nadir_text:
+                        nadir_flag = "NO"
+                    elif "NADIR" in nadir_text:
+                        nadir_flag = "YES"
+                elif view_zenith_deg is not None:
+                    nadir_flag = (
+                        "YES"
+                        if abs(view_zenith_deg) <= NADIR_MAX_VIEW_ZENITH_DEG
+                        else "NO"
+                    )
+
                 row: Dict[str, Any] = {
                     "time": t,
                     "sat_name": p.get("sat_name"),
@@ -872,6 +919,7 @@ def gee_past_acquisitions(
                     "cloud_scene_pct": _safe_float(p.get("cloud_scene_pct")),
                     "sun_azimuth_deg": _safe_float(p.get("sun_azimuth_deg")),
                     "sun_zenith_deg": _safe_float(p.get("sun_zenith_deg")),
+                    "nadir_flag": nadir_flag,
                     "scene_center_dist_km": _safe_float(p.get("scene_center_dist_km")),
                     "scene_center_lat": _safe_float(p.get("scene_center_lat")),
                     "scene_center_lon": _safe_float(p.get("scene_center_lon")),
@@ -944,18 +992,20 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
 
     ev = df_events_w.copy()
     ev["time"] = pd.to_datetime(ev["time"]).dt.floor("s")
-    ev = ev[["sat_name", "time", "scene_id", "collection", "cloud_scene_pct"]].copy()
+    if "nadir_flag" not in ev.columns:
+        ev["nadir_flag"] = "UNKNOWN"
+    ev = ev[["sat_name", "time", "scene_id", "collection", "cloud_scene_pct", "nadir_flag"]].copy()
 
     out["time_a"] = pd.to_datetime(out["time_a"]).dt.floor("s")
     out["time_b"] = pd.to_datetime(out["time_b"]).dt.floor("s")
 
     out = out.merge(
-        ev.rename(columns={"sat_name": "sat_a", "time": "time_a", "scene_id": "scene_a", "collection": "collection_a", "cloud_scene_pct": "cloud_a"}),
+        ev.rename(columns={"sat_name": "sat_a", "time": "time_a", "scene_id": "scene_a", "collection": "collection_a", "cloud_scene_pct": "cloud_a", "nadir_flag": "nadir_a"}),
         on=["sat_a", "time_a", "scene_a", "collection_a"],
         how="left"
     )
     out = out.merge(
-        ev.rename(columns={"sat_name": "sat_b", "time": "time_b", "scene_id": "scene_b", "collection": "collection_b", "cloud_scene_pct": "cloud_b"}),
+        ev.rename(columns={"sat_name": "sat_b", "time": "time_b", "scene_id": "scene_b", "collection": "collection_b", "cloud_scene_pct": "cloud_b", "nadir_flag": "nadir_b"}),
         on=["sat_b", "time_b", "scene_b", "collection_b"],
         how="left"
     )
@@ -973,8 +1023,26 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
         return "OK"
 
     out["PAIR_FLAG"] = [row_flag(a, b) for a, b in zip(out["cloud_a"], out["cloud_b"])]
-    # keep table clean
-    out = out.drop(columns=["cloud_a", "cloud_b"], errors="ignore")
+
+    # Pair-level display-only nadir flag:
+    # YES     = both matched scenes are nadir/near-nadir
+    # NO      = at least one matched scene is off-nadir
+    # UNKNOWN = geometry is unavailable for one/both scenes
+    def pair_nadir_flag(a, b) -> str:
+        a = str(a).upper() if pd.notna(a) else "UNKNOWN"
+        b = str(b).upper() if pd.notna(b) else "UNKNOWN"
+        if a == "NO" or b == "NO":
+            return "NO"
+        if a == "YES" and b == "YES":
+            return "YES"
+        return "UNKNOWN"
+
+    out["NADIR_FLAG"] = [
+        pair_nadir_flag(a, b) for a, b in zip(out["nadir_a"], out["nadir_b"])
+    ]
+
+    # keep table clean: only expose the final pair-level NADIR_FLAG
+    out = out.drop(columns=["cloud_a", "cloud_b", "nadir_a", "nadir_b"], errors="ignore")
     return out
 
 
@@ -2209,7 +2277,7 @@ def main():
                     show_cols = [
                         "time_a", "sat_a", "scene_a", "collection_a",
                         "time_b", "sat_b", "scene_b", "collection_b",
-                        "dt_minutes", "PAIR_FLAG"
+                        "dt_minutes", "PAIR_FLAG", "NADIR_FLAG"
                     ]
                     for c in show_cols:
                         if c not in df_sno.columns:
@@ -2298,7 +2366,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
