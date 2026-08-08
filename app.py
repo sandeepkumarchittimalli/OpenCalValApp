@@ -2307,6 +2307,11 @@ def main():
                 st.dataframe(style_quality_rows(df_show), use_container_width=True)
 
                 st.subheader("SNO candidates (past)")
+                st.caption(
+                   "SNO_VALID = YES when the pair is within 30 minutes and both observations "
+                "satisfy the near-nadir criterion. NO means the time or geometry criterion "
+                "failed. UNKNOWN means viewing-geometry information is unavailable."
+                )
                 df_sno = st.session_state.get("past_sno", pd.DataFrame())
                 if df_sno is None or df_sno.empty:
                     st.info("No SNO candidates found for this window.")
