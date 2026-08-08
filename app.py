@@ -2315,7 +2315,7 @@ def main():
                     show_cols = [
                         "time_a", "sat_a", "scene_a", "collection_a",
                         "time_b", "sat_b", "scene_b", "collection_b",
-                        "dt_minutes", "PAIR_FLAG", "NADIR_FLAG", "SNO_VALID", "SNO_REASON"
+                        "dt_minutes", "PAIR_FLAG", "SNO_VALID", "SNO_REASON"
                     ]
                     for c in show_cols:
                         if c not in df_sno.columns:
