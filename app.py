@@ -118,18 +118,22 @@ ABOUT_MD = f"""
   - BAD if cloud ≥ {BAD_CLOUD_PCT:.0f}% or precip ≥ {BAD_PRECIP_MM}
   - otherwise OK
 
-- **SNO candidates (all mission pairs)**
-  - Past: acquisitions paired within ± window
-  - Future: predicted passes paired within ± window
+- **Temporal matchup candidates (all mission pairs)**
+  - Past: acquisitions paired within the user-selected search window
+  - Future: predicted passes paired within the user-selected search window
+
+- **Strict SNO validation (past)**
+  - `SNO_VALID = YES` only when the pair is within 30 minutes and both observations satisfy the near-nadir criterion
+  - Broader hour/day-scale pairs remain temporal matchups, not strict SNOs
 
 ✅ Results are shown directly on the **same map**:  
 - **★** = acquisition / pass  
-- **ring** = part of an SNO pair
+- **ring** = part of a temporal matchup pair
 
-### SNO time window guidance
+### Temporal matchup search-window guidance
 
 Different satellites were flown with very different orbital strategies.  
-The SNO time window should be chosen based on the satellite pair:
+The temporal matchup search window should be chosen based on the satellite pair:
 
 **True constellation SNOs (use short windows, 30–60 minutes):**
 - Landsat 8 ↔ Landsat 9  
@@ -146,7 +150,7 @@ The SNO time window should be chosen based on the satellite pair:
 - Landsat-1 / 2 / 3 (MSS)  
 - Landsat-4 / 5 (MSS or TM)
 
-Choosing too short a window for early missions will correctly return zero SNOs.
+Choosing too short a window for early missions will correctly return zero temporal matchups.
 """
 
 
@@ -942,6 +946,26 @@ def gee_past_acquisitions(
 
 # ------------------- SNO (PAST) -------------------
 
+def spacecraft_id(sat_name: str) -> str:
+    """
+    Normalize mission labels to the physical spacecraft/platform.
+
+    This prevents same-spacecraft instrument combinations such as
+    Landsat 4 MSS ↔ Landsat 4 TM and Landsat 5 MSS ↔ Landsat 5 TM
+    from being treated as cross-satellite temporal matchups.
+    """
+    s = str(sat_name).strip().upper()
+
+    if s.startswith("LANDSAT 4"):
+        return "LANDSAT 4"
+    if s.startswith("LANDSAT 5"):
+        return "LANDSAT 5"
+
+    # Other mission labels already identify distinct spacecraft
+    # (e.g., LANDSAT 8 vs LANDSAT 9, SENTINEL-2A vs SENTINEL-2B).
+    return s
+
+
 def compute_snos_allpairs(df_events: pd.DataFrame, sno_window_minutes: float) -> pd.DataFrame:
     if df_events is None or df_events.empty:
         return pd.DataFrame()
@@ -957,8 +981,17 @@ def compute_snos_allpairs(df_events: pd.DataFrame, sno_window_minutes: float) ->
     for i, t in enumerate(times):
         right = np.searchsorted(times, t + win, side="right")
         for j in range(i + 1, right):
-            if df.loc[i, "sat_name"] == df.loc[j, "sat_name"]:
+            sat_i = df.loc[i, "sat_name"]
+            sat_j = df.loc[j, "sat_name"]
+
+            # Skip observations from the same physical spacecraft/platform.
+            # Examples excluded: Landsat 4 MSS ↔ Landsat 4 TM,
+            # Landsat 5 MSS ↔ Landsat 5 TM.
+            # Legitimate cross-spacecraft pairs such as Landsat 8 ↔ Landsat 9
+            # and Sentinel-2A ↔ Sentinel-2B remain included.
+            if spacecraft_id(sat_i) == spacecraft_id(sat_j):
                 continue
+
             dt_min = float((times[j] - t) / np.timedelta64(1, "m"))
             out.append({
                 "time_a": df.loc[i, "time"],
@@ -1499,32 +1532,95 @@ def acquisition_metrics(df: pd.DataFrame, sat_col: str = "sat_name") -> pd.DataF
 
 def sno_metrics_by_pair_counts(df_sno: pd.DataFrame) -> pd.DataFrame:
     """
-    Expects df_sno has columns: sat_a, sat_b, dt_minutes, PAIR_FLAG (GOOD/OK/BAD)
-    Output: pair, SNO_COUNT, GOOD_COUNT, OK_COUNT, BAD_COUNT, SNO_WINDOW(min/hours/days)
+    Summary by normalized sensor pair.
+
+    MATCHUP_COUNT:
+        All temporal matchup candidates found inside the user-selected search window.
+
+    VALID_SNO_COUNT:
+        Added when SNO_VALID exists; counts only rows where SNO_VALID == "YES".
+
+    GOOD/OK/BAD_COUNT:
+        Quality counts for all temporal matchup candidates.
+
+    MIN_TIME_DIFF:
+        Closest temporal separation found for the normalized sensor pair.
     """
     if df_sno is None or df_sno.empty:
         return pd.DataFrame()
+
     tmp = df_sno.copy()
-    tmp["pair"] = tmp["sat_a"].astype(str) + " ↔ " + tmp["sat_b"].astype(str)
+
+    # Normalize pair direction so A ↔ B and B ↔ A are one pair.
+    tmp["pair"] = [
+        " ↔ ".join(sorted([str(a), str(b)]))
+        for a, b in zip(tmp["sat_a"], tmp["sat_b"])
+    ]
+
     if "PAIR_FLAG" not in tmp.columns:
         tmp["PAIR_FLAG"] = "OK"
 
-    # counts by flag
-    counts = tmp.pivot_table(index="pair", columns="PAIR_FLAG", values="dt_minutes", aggfunc="size", fill_value=0)
+    counts = tmp.pivot_table(
+        index="pair",
+        columns="PAIR_FLAG",
+        values="dt_minutes",
+        aggfunc="size",
+        fill_value=0,
+    )
     for col in ["GOOD", "OK", "BAD"]:
         if col not in counts.columns:
             counts[col] = 0
-    counts = counts[["GOOD", "OK", "BAD"]]
-    counts = counts.rename(columns={"GOOD": "GOOD_COUNT", "OK": "OK_COUNT", "BAD": "BAD_COUNT"})
+    counts = counts[["GOOD", "OK", "BAD"]].rename(
+        columns={
+            "GOOD": "GOOD_COUNT",
+            "OK": "OK_COUNT",
+            "BAD": "BAD_COUNT",
+        }
+    )
 
-    # total + min dt
-    agg = tmp.groupby("pair").agg(SNO_COUNT=("pair", "size"), DT_MIN=("dt_minutes", "min")).reset_index()
+    matchup_counts = (
+        tmp.groupby("pair")
+        .size()
+        .rename("MATCHUP_COUNT")
+        .reset_index()
+    )
 
-    out = agg.merge(counts.reset_index(), on="pair", how="left")
-    out["SNO_WINDOW(min/hours/days)"] = out["DT_MIN"].apply(format_dt_minutes)
+    min_dt = (
+        tmp.groupby("pair")["dt_minutes"]
+        .min()
+        .rename("DT_MIN")
+        .reset_index()
+    )
+
+    out = matchup_counts.merge(counts.reset_index(), on="pair", how="left")
+    out = out.merge(min_dt, on="pair", how="left")
+
+    # Past matchup tables include SNO_VALID. Future tables currently do not,
+    # so VALID_SNO_COUNT is shown only when strict SNO validation exists.
+    if "SNO_VALID" in tmp.columns:
+        valid_sno_counts = (
+            tmp.assign(_valid=(tmp["SNO_VALID"].astype(str).str.upper() == "YES"))
+            .groupby("pair")["_valid"]
+            .sum()
+            .astype(int)
+            .rename("VALID_SNO_COUNT")
+            .reset_index()
+        )
+        out = out.merge(valid_sno_counts, on="pair", how="left")
+
+    out["MIN_TIME_DIFF"] = out["DT_MIN"].apply(format_dt_minutes)
     out = out.drop(columns=["DT_MIN"])
-    out = out.sort_values(["SNO_COUNT", "pair"], ascending=[False, True]).reset_index(drop=True)
-    return out
+
+    cols = ["pair", "MATCHUP_COUNT"]
+    if "VALID_SNO_COUNT" in out.columns:
+        cols.append("VALID_SNO_COUNT")
+    cols += ["GOOD_COUNT", "OK_COUNT", "BAD_COUNT", "MIN_TIME_DIFF"]
+    out = out[cols]
+
+    return out.sort_values(
+        ["MATCHUP_COUNT", "pair"],
+        ascending=[False, True]
+    ).reset_index(drop=True)
 
 
 # ------------------- TIME SERIES -------------------
@@ -1817,16 +1913,16 @@ def main():
     default_label = "30 min"
 
     sno_choice = st.sidebar.selectbox(
-        "SNO time window",
+        "Temporal matchup search window",
         options=preset_labels,
         index=preset_labels.index(default_label),
-        help="Short windows for modern constellations; longer windows for early Landsat era.",
+        help="Search window for finding temporal matchup candidates. Strict SNO validation remains fixed at ≤30 minutes plus near-nadir geometry.",
         key="sno_window_choice"
     )
     sno_window_min = dict(SNO_PRESETS).get(sno_choice)
     if sno_window_min is None:
         sno_window_min = st.sidebar.number_input(
-            "Custom SNO window (minutes)",
+            "Custom matchup window (minutes)",
             min_value=30,
             max_value=10 * 1440,
             value=60,
@@ -2306,7 +2402,7 @@ def main():
                 df_show = df_events_w[cols].sort_values(["time", "sat_name"])
                 st.dataframe(style_quality_rows(df_show), use_container_width=True)
 
-                st.subheader("SNO candidates (past)")
+                st.subheader("Temporal matchup candidates (past)")
                 st.caption(
                    "SNO_VALID = YES when the pair is within 30 minutes and both observations "
                 "satisfy the near-nadir criterion. NO means the time or geometry criterion "
@@ -2314,7 +2410,7 @@ def main():
                 )
                 df_sno = st.session_state.get("past_sno", pd.DataFrame())
                 if df_sno is None or df_sno.empty:
-                    st.info("No SNO candidates found for this window.")
+                    st.info("No temporal matchup candidates found for this search window.")
                 else:
                     # show PAIR_FLAG for users (no cloud_a/cloud_b)
                     show_cols = [
@@ -2345,10 +2441,10 @@ def main():
                 df_show = df_pred_w[cols].sort_values(["time", "sat_name"])
                 st.dataframe(style_quality_rows(df_show), use_container_width=True)
 
-                st.subheader("SNO candidates (future)")
+                st.subheader("Temporal matchup candidates (future)")
                 df_sno_f = st.session_state.get("future_sno", pd.DataFrame())
                 if df_sno_f is None or df_sno_f.empty:
-                    st.info("No SNO candidates found for this window.")
+                    st.info("No temporal matchup candidates found for this search window.")
                 else:
                     st.dataframe(df_sno_f.sort_values("dt_minutes"), use_container_width=True)
 
@@ -2361,7 +2457,7 @@ def main():
             f"**Site:** {site_label} &nbsp;&nbsp; "
             f"**Lat/Lon:** {lat:.4f}, {lon:.4f} &nbsp;&nbsp; "
             f"**Dates:** {start_date_str} to {end_date_str} &nbsp;&nbsp; "
-            f"**SNO window:** {format_dt_minutes(sno_window_min)}"
+            f"**Matchup search window:** {format_dt_minutes(sno_window_min)}"
         )
 
         if st.session_state["mode"] == "Past acquisitions":
@@ -2375,9 +2471,15 @@ def main():
             else:
                 st.dataframe(m1, use_container_width=True)
 
-            st.markdown("### SNO metrics (by sensor pair)")
+            st.markdown("### Matchup / SNO metrics (by sensor pair)")
+            st.caption(
+                "MATCHUP_COUNT = all temporal pairs within the selected search window. "
+                "VALID_SNO_COUNT = pairs that additionally satisfy the strict ≤30-minute "
+                "and near-nadir criteria. MIN_TIME_DIFF is the closest temporal separation "
+                "found for that normalized sensor pair."
+            )
             if df_sno is None or df_sno.empty:
-                st.info("No SNOs found (or run Past acquisitions first).")
+                st.info("No temporal matchup candidates found (or run Past acquisitions first).")
             else:
                 m2 = sno_metrics_by_pair_counts(df_sno)
                 st.dataframe(m2, use_container_width=True)
@@ -2393,9 +2495,9 @@ def main():
             else:
                 st.dataframe(m1, use_container_width=True)
 
-            st.markdown("### SNO metrics (future) (by sensor pair)")
+            st.markdown("### Temporal matchup metrics (future) (by sensor pair)")
             if df_sno_f is None or df_sno_f.empty:
-                st.info("No SNOs found (or run Future pass planning first).")
+                st.info("No temporal matchup candidates found (or run Future pass planning first).")
             else:
                 # future df_sno_f's with pair Flag
                 if "PAIR_FLAG" not in df_sno_f.columns:
