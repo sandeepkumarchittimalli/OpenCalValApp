@@ -93,6 +93,9 @@ BAD_PRECIP_MM = 1.0
 
 MIN_ELEV_DEG_DEFAULT = 5.0  # future pass planning threshold
 
+# Strict SNO validation threshold (separate from the user-selected broad search window)
+STRICT_SNO_MINUTES = 30.0
+
 # TEST: near-nadir threshold used only for the SNO display flag when a sensor zenith angle is available.
 NADIR_MAX_VIEW_ZENITH_DEG = 5.0
 
@@ -1041,7 +1044,42 @@ def add_pair_flag_to_sno_table(df_sno: pd.DataFrame, df_events_w: pd.DataFrame) 
         pair_nadir_flag(a, b) for a, b in zip(out["nadir_a"], out["nadir_b"])
     ]
 
-    # keep table clean: only expose the final pair-level NADIR_FLAG
+    # Strict SNO validity is intentionally separate from the user-selected search window.
+    # The broad search window can be hours/days for matchup discovery, but a strict SNO
+    # requires BOTH near-simultaneous timing and nadir/near-nadir geometry.
+    def strict_sno_valid(dt_minutes, nadir_flag) -> str:
+        if pd.isna(dt_minutes):
+            return "UNKNOWN"
+        nf = str(nadir_flag).upper() if pd.notna(nadir_flag) else "UNKNOWN"
+        if nf == "UNKNOWN":
+            return "UNKNOWN"
+        if float(dt_minutes) <= STRICT_SNO_MINUTES and nf == "YES":
+            return "YES"
+        return "NO"
+
+    def strict_sno_reason(dt_minutes, nadir_flag) -> str:
+        if pd.isna(dt_minutes):
+            return "Missing time difference"
+        nf = str(nadir_flag).upper() if pd.notna(nadir_flag) else "UNKNOWN"
+        dt = float(dt_minutes)
+        if nf == "UNKNOWN":
+            return "Geometry unavailable"
+        if dt > STRICT_SNO_MINUTES:
+            return f"Time > {STRICT_SNO_MINUTES:.0f} min"
+        if nf == "NO":
+            return "Off-nadir geometry"
+        return "Time + nadir criteria met"
+
+    out["SNO_VALID"] = [
+        strict_sno_valid(dt, nf)
+        for dt, nf in zip(out["dt_minutes"], out["NADIR_FLAG"])
+    ]
+    out["SNO_REASON"] = [
+        strict_sno_reason(dt, nf)
+        for dt, nf in zip(out["dt_minutes"], out["NADIR_FLAG"])
+    ]
+
+    # keep table clean: only expose pair-level geometry/validity fields
     out = out.drop(columns=["cloud_a", "cloud_b", "nadir_a", "nadir_b"], errors="ignore")
     return out
 
@@ -2277,7 +2315,7 @@ def main():
                     show_cols = [
                         "time_a", "sat_a", "scene_a", "collection_a",
                         "time_b", "sat_b", "scene_b", "collection_b",
-                        "dt_minutes", "PAIR_FLAG", "NADIR_FLAG"
+                        "dt_minutes", "PAIR_FLAG", "NADIR_FLAG", "SNO_VALID", "SNO_REASON"
                     ]
                     for c in show_cols:
                         if c not in df_sno.columns:
